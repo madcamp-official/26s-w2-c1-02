@@ -1,0 +1,466 @@
+# Rehearsal.io — API 명세서 (초안 v0.1)
+
+> LLM 기반 프레젠테이션 질의응답 생성/분석 서비스의 백엔드(FastAPI) ↔ 프론트(Flutter Web/iOS/Android) API 계약.
+> 기능명세서(Google Sheets) + 와이어프레임 28화면(`design/wireframes/`) 기준으로 작성.
+> **이 문서는 "의도된 최종 API" 설계이며, 현재 스캐폴드는 일부만 구현(Mock)되어 있습니다.** (§0.3 참고)
+
+작성일: 2026-07-11 · 상태: **초안(가정 기반)** — 아래 §0.2 가정값은 팀 논의 후 확정 필요.
+
+---
+
+## 0. 개요
+
+### 0.1 핵심 파이프라인
+
+발표 1회 = **세션(Session)** 하나. 세션은 아래 단계를 거치며, 무거운 단계는 모두 비동기로 처리됩니다.
+
+```
+PDF 업로드 ──(파싱)──▶ slides.json
+                                   ╲
+발표 녹음/업로드 ──(STT)──▶ transcript.json ──▶ AI 질문 생성 ──▶ 질의응답 루프 ──▶ 세션 저장 ──▶ 분석 리포트
+                                   ╱                          (TTS·답변 STT·꼬리질문)
+```
+
+### 0.2 가정한 기본값 (⚠️ 확정 필요)
+
+| # | 항목 | 기본값(가정) | 비고 |
+|---|---|---|---|
+| A1 | 인증 방식 | JWT (access 짧은 수명 + refresh) + 소셜 OAuth | 현재 스캐폴드는 Mock. 자동 로그인 = refresh 토큰(httpOnly 쿠키) + `GET /auth/me` |
+| A2 | 비동기 처리 모델 | **리소스 내 상태 필드 + 클라이언트 폴링**(1~2s) | 별도 `/jobs` 서브시스템 대신 리소스 GET으로 상태 확인. SSE는 선택적 확장(§7) |
+| A3 | PDF 파싱 | 비동기 (`material.status`) | 실패/재업로드 UI 필요 → 비동기 |
+| A4 | STT (발표·답변) | 비동기 (`transcript.status`, `answer.stt_status`) | |
+| A5 | AI 질문 생성 | 비동기 (`session.status = generating_questions`) | 동기 가능하나 STT 의존이라 비동기로 통일 |
+| A6 | TTS (질문 음성) | 비동기 (`question.tts.status`) | self-hosted(VoxCPM2) 동시성 한계 → 큐 가정 |
+| A7 | 분석 리포트 | 비동기 + **세션 종료 시 자동 생성** | 수동 재생성 엔드포인트도 제공 |
+| A8 | 발표 녹음 방식 | 클라이언트가 로컬 녹음 → **종료 시 파일 업로드**. 실시간/파일업로드 모드가 업로드 지점에서 수렴 | 서버 실시간 스트리밍 미사용 |
+| A9 | 타이머 | 클라이언트 권위. 서버는 `started_at/ended_at`만 저장 | |
+| A10 | 파일 저장 | 오브젝트 스토리지 + 서명 URL(`*_url`)로 재생 | 보관 정책 미정(§8) |
+| A11 | 꼬리질문 최대 깊이 | **1** | 명세 준수 |
+| A12 | 질의응답 종료 우선순위 | 사용자 종료 > 질의 수 도달 > 답변 시간초과 | 명세 준수 |
+| A13 | 마이크 권한 | **클라이언트 전용**(API 없음) | 브라우저/OS 권한 |
+
+### 0.3 현재 스캐폴드와의 차이
+
+- 스캐폴드는 `Team` / `Speech`(단일 `audienceType`) / Mock 인증만 존재.
+- 본 명세는 `Speech` → **`Session`**(멀티 페르소나, slides/transcript/qna/report 포함)으로 확장.
+- 스캐폴드의 `MockAuthRepository`·`InMemoryStore`·`LLMProvider` 추상화는 그대로 재사용 가능.
+
+---
+
+## 1. 공통 규약
+
+- **Base URL**: `/api/v1`
+- **인증**: `Authorization: Bearer <access_token>` (§2 예외 제외)
+- **직렬화**: 요청/응답 `application/json`, 파일 업로드 `multipart/form-data`
+- **시간**: ISO 8601 UTC (`2026-07-11T08:30:00Z`)
+- **ID**: 문자열(`ses_...`, `team_...` prefix)
+- **페이지네이션**: `?limit=20&cursor=<opaque>` → `{ items, next_cursor }`
+- **멱등성**: 파일 업로드/생성 트리거는 `Idempotency-Key` 헤더 지원(선택)
+
+### 1.1 에러 포맷
+
+```json
+{ "error": { "code": "TEAM_NOT_FOUND", "message": "팀을 찾을 수 없어요.", "details": {} } }
+```
+
+| HTTP | 사용 |
+|---|---|
+| 200 / 201 / 204 | 성공 / 생성 / 본문 없음 |
+| 202 | 비동기 작업 접수(처리 시작) |
+| 400 / 401 / 403 / 404 / 409 | 검증 실패 / 미인증 / 권한 / 없음 / 충돌(중복 등) |
+| 413 / 415 | 파일 용량 초과 / 지원하지 않는 형식 |
+| 422 | 처리 불가(예: 스캔본 PDF) |
+| 429 / 500 / 503 | 레이트리밋 / 서버 오류 / 모델·외부 API 일시 오류 |
+
+주요 에러 코드는 §6.
+
+### 1.2 비동기 상태 규약 (A2)
+
+무거운 작업은 즉시 `202`로 접수되고, 결과는 부모 리소스의 상태 필드에 반영됩니다. 클라이언트는 해당 리소스를 폴링합니다.
+
+```
+status ∈ { queued, processing, succeeded, failed }
+```
+
+실패 시 같은 리소스에 `error: { code, message }`가 채워지고, `retry` 엔드포인트로 재시도합니다.
+
+### 1.3 파일 제약 (기본값)
+
+| 종류 | 형식 | 최대 |
+|---|---|---|
+| 발표 자료 | PDF (텍스트 추출 가능본) | 20 MB · 50 페이지 |
+| 발표/답변 녹음 | mp3 · wav · m4a | 60 분 · 200 MB |
+
+스캔본/이미지 PDF는 `422 UNPROCESSABLE_PDF`로 거부(기본값; OCR은 후속).
+
+---
+
+## 2. 인증 · 계정 (`/auth`, `/users`)
+
+> `/auth/*`는 인증 불필요(리프레시/로그아웃 제외).
+
+| Method | Path | 설명 |
+|---|---|---|
+| POST | `/auth/signup` | 회원가입: 이름·아이디·비밀번호·비밀번호확인·이메일 → 미인증 유저 생성 + 인증코드 발송 |
+| POST | `/auth/email/verify-request` | 인증코드 재발송 `{ email }` |
+| POST | `/auth/email/verify` | 이메일 인증 `{ email, code }` |
+| POST | `/auth/login` | 로그인 `{ username, password }` → 토큰 + 유저 |
+| POST | `/auth/login/social/{provider}` | 소셜 로그인 `provider ∈ {google, kakao, naver}`, `{ id_token }` 교환 |
+| POST | `/auth/refresh` | refresh → 새 access (자동 로그인) |
+| POST | `/auth/logout` | 세션/refresh 무효화 |
+| GET | `/auth/me` | 현재 유저(자동 로그인 확인용) |
+
+> **아이디/비밀번호 찾기**(와이어프레임 `a3`)는 "관리자에게 문의하세요" 정적 화면 → **엔드포인트 없음**.
+
+**로그인 응답 예시**
+```json
+{
+  "access_token": "eyJhbGci...",
+  "refresh_token": "eyJhbGci...",
+  "token_type": "Bearer",
+  "expires_in": 900,
+  "user": { "id": "usr_1", "name": "박준서", "username": "junseo", "email": "bjsbest0326@gmail.com" }
+}
+```
+
+### 2.1 마이페이지 (`/users`)
+
+| Method | Path | 설명 |
+|---|---|---|
+| GET | `/users/me` | 계정 정보 |
+| PATCH | `/users/me` | 프로필(닉네임 등) 수정 |
+| PATCH | `/users/me/password` | 비밀번호 변경 `{ current_password, new_password }` |
+| DELETE | `/users/me` | 회원 탈퇴(연관 데이터 처리 방침 §8) |
+
+---
+
+## 3. 팀 (`/teams`, `/invites`)
+
+| Method | Path | 설명 | 권한 |
+|---|---|---|---|
+| GET | `/teams` | 내 팀 목록(멤버 미리보기·발표 수 포함) | 멤버 |
+| POST | `/teams` | 팀 생성 `{ name }` | - |
+| GET | `/teams/{teamId}` | 팀 상세 | 멤버 |
+| PATCH | `/teams/{teamId}` | 팀 이름 변경 | 팀장 |
+| DELETE | `/teams/{teamId}` | 팀 삭제 | 팀장 |
+| POST | `/teams/{teamId}/leave` | 팀 나가기 | 멤버 |
+| GET | `/teams/{teamId}/members` | 팀원 목록 | 멤버 |
+| DELETE | `/teams/{teamId}/members/{userId}` | 팀원 내보내기 | 팀장 |
+
+### 3.1 초대 (이메일 / 링크)
+
+| Method | Path | 설명 |
+|---|---|---|
+| POST | `/teams/{teamId}/invites` | 이메일 초대 `{ email }` → 초대 메일 발송 |
+| POST | `/teams/{teamId}/invites/link` | 초대 링크 생성/회전 → `{ token, url, expires_at }` |
+| GET | `/teams/{teamId}/invites` | 대기 중 초대 목록 |
+| DELETE | `/teams/{teamId}/invites/{inviteId}` | 초대 취소 |
+| GET | `/invites/{token}` | 초대 미리보기(팀명·인원·발표 수) — 수락 화면용 |
+| POST | `/invites/{token}/accept` | 초대 수락 → 팀 합류 |
+| POST | `/invites/{token}/decline` | 초대 거절 |
+
+---
+
+## 4. 발표 세션 (`/teams/{teamId}/sessions`, `/sessions/{sessionId}`)
+
+핵심 리소스. 상태 머신:
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft: POST /sessions
+    draft --> recording: recording/start (실시간)
+    draft --> transcribing: recording 업로드 (파일모드)
+    recording --> transcribing: recording 업로드(발표 마치기)
+    transcribing --> generating_questions: STT 완료 → qna/generate
+    generating_questions --> qna: 질문 생성 완료
+    qna --> completed: qna/end (or 종료조건 충족)
+    completed --> [*]
+    transcribing --> failed: STT 실패(재시도 가능)
+    generating_questions --> failed: 생성 실패(재시도 가능)
+```
+
+> `material`(PDF)은 세션 상태와 **독립적으로** 파싱됩니다(`session.material.status`). 질문 생성 시 자료가 있으면 `material.status = ready`를 대기합니다.
+
+### 4.1 세션 CRUD
+
+| Method | Path | 설명 |
+|---|---|---|
+| GET | `/teams/{teamId}/sessions` | 세션(발표) 목록 |
+| POST | `/teams/{teamId}/sessions` | 세션 생성(발표 설정) |
+| GET | `/sessions/{sessionId}` | 세션 상세(요약·상태) |
+| PATCH | `/sessions/{sessionId}` | 설정 수정(`draft`일 때) |
+| DELETE | `/sessions/{sessionId}` | 발표 삭제(녹음·로그 cascade) |
+
+**세션 생성 요청**
+```json
+{
+  "name": "1차 발표",
+  "personas": ["egen", "teto", "kkondae"],
+  "question_count": 5,
+  "time_limit_minutes": 10,
+  "mode": "realtime"
+}
+```
+`personas`(중복 선택, 1개 이상), `mode ∈ {realtime, upload}`.
+
+**세션 상세 응답(요약)**
+```json
+{
+  "id": "ses_1", "team_id": "team_1", "name": "1차 발표",
+  "status": "qna",
+  "personas": ["egen","teto","kkondae"],
+  "question_count": 5, "time_limit_minutes": 10, "mode": "realtime",
+  "material": { "status": "ready", "slide_count": 10 },
+  "recording": { "status": "ready", "duration_seconds": 663, "audio_url": "https://.../rec.m4a" },
+  "transcript": { "status": "succeeded" },
+  "report": { "status": "processing" },
+  "created_at": "2026-07-08T02:10:00Z"
+}
+```
+
+### 4.2 발표 자료 (PDF → slides.json)
+
+| Method | Path | 설명 |
+|---|---|---|
+| POST | `/sessions/{sessionId}/material` | PDF 업로드(multipart) → **비동기 파싱 시작**(`202`) |
+| GET | `/sessions/{sessionId}/material` | 파싱 상태 + 슬라이드(페이지·텍스트) |
+| POST | `/sessions/{sessionId}/material/retry` | 파싱 재시도 |
+| DELETE | `/sessions/{sessionId}/material` | 자료 삭제(자료 없이 진행 허용) |
+
+**GET material 응답**
+```json
+{
+  "status": "ready",          // queued | processing | ready | failed
+  "progress": 1.0,
+  "file_name": "deck.pdf", "page_count": 10,
+  "slides": [ { "page": 1, "text": "표지 …" }, { "page": 2, "text": "문제 정의 …" } ],
+  "error": null
+}
+```
+스캔본 등 실패: `status:"failed"`, `error:{ code:"UNPROCESSABLE_PDF", message:"텍스트를 읽을 수 없어요." }`.
+
+### 4.3 발표 녹음 & STT (→ transcript.json)
+
+| Method | Path | 설명 |
+|---|---|---|
+| POST | `/sessions/{sessionId}/recording/start` | (실시간·선택) 녹음 시작 표시 → `status=recording`, `started_at`. 이탈 후 이어하기용 |
+| POST | `/sessions/{sessionId}/recording` | 녹음 파일 업로드(multipart, 실시간 종료·파일 모드 공용) → **STT 시작**(`202`) |
+| GET | `/sessions/{sessionId}/transcript` | STT 상태 + 세그먼트 |
+| POST | `/sessions/{sessionId}/transcript/retry` | STT 재시도 |
+
+**녹음 업로드(multipart 필드)**: `file`(audio), `started_at`, `ended_at`, `duration_seconds`.
+
+**GET transcript 응답**
+```json
+{
+  "status": "succeeded",       // queued | processing | succeeded | failed
+  "segments": [
+    { "ts": "00:12", "text": "안녕하세요, 오늘 발표를 맡은 박준서입니다." },
+    { "ts": "04:12", "text": "성능은 기존 대비 2배 개선되었습니다." }
+  ],
+  "error": null
+}
+```
+
+### 4.4 질의응답 (Q&A)
+
+STT 완료 후 질문 생성 → 질문별 TTS 재생 → 답변 녹음 → (선택)꼬리질문 루프.
+
+| Method | Path | 설명 |
+|---|---|---|
+| POST | `/sessions/{sessionId}/qna/generate` | slides+transcript+personas 기반 질문 생성(`202`) → `status=generating_questions` |
+| GET | `/sessions/{sessionId}/qna` | Q&A 전체 상태(질문 목록·현재 인덱스·종료 여부) |
+| GET | `/sessions/{sessionId}/qna/questions/{questionId}` | 질문 상세(텍스트·페르소나·근거·TTS) |
+| POST | `/sessions/{sessionId}/qna/questions/{questionId}/answer` | 답변 녹음 업로드(multipart) → STT + (선택)꼬리질문 |
+| POST | `/sessions/{sessionId}/qna/questions/{questionId}/pass` | 답변 스킵/패스 → 다음 질문(꼬리질문 생략) |
+| POST | `/sessions/{sessionId}/qna/end` | 질의응답 종료 → `completed` + 리포트 자동 생성 |
+
+**GET /qna 응답**
+```json
+{
+  "status": "in_progress",       // in_progress | ended
+  "current_question_id": "q_2",
+  "ended_reason": null,          // user_end | count_reached | (per-answer)timeout
+  "questions": [
+    {
+      "id": "q_1", "order": 1, "persona": "kkondae", "parent_id": null, "follow_up_depth": 0,
+      "text": "측정 환경이 뭐였는지 설명해봐요.",
+      "evidence": { "slides": [3], "transcript_refs": [ { "ts": "04:12" } ] },
+      "tts": { "status": "ready", "audio_url": "https://.../q1.mp3" },
+      "answer": { "status": "answered", "text": "사내 서버 A100 1대에서 3회 평균으로 측정했습니다.", "audio_url": "https://.../a1.m4a" }
+    },
+    {
+      "id": "q_2", "order": 2, "persona": "egen", "parent_id": null, "follow_up_depth": 0,
+      "text": "경쟁 서비스 대비 차별점이 뭔가요?",
+      "evidence": { "slides": [], "transcript_refs": [] },
+      "tts": { "status": "processing", "audio_url": null },
+      "answer": { "status": "pending" }
+    }
+  ]
+}
+```
+
+- **질문 근거 표시**(A: 결정 반영): `evidence.slides` / `evidence.transcript_refs`.
+- **TTS 다시 듣기**: 동일 `audio_url` 재생(새 요청 불필요). 재생성 필요 시 별도 협의.
+- **답변 자동 녹음**(결정 반영): TTS `status=ready` 도달 후 클라이언트가 자동 녹음 시작. API는 결과 오디오만 수신.
+
+**답변 제출 응답(POST /answer)** — 꼬리질문/다음 이동을 함께 반환
+```json
+{
+  "answer": { "status": "processing", "text": null, "audio_url": "https://.../a2.m4a" },
+  "follow_up": {                 // 없으면 null (깊이 1 도달·판단상 불필요 시)
+    "id": "q_2_1", "order": 3, "persona": "egen", "parent_id": "q_2", "follow_up_depth": 1,
+    "text": "표준편차는 확인했어요?", "tts": { "status": "queued", "audio_url": null }
+  },
+  "next_question_id": "q_2_1",
+  "session_ended": false, "ended_reason": null
+}
+```
+
+> **종료 조건**(A12): 사용자 `qna/end` > 설정 질의 수 도달 > 답변 시간초과(→ 자동 다음). 시간초과는 클라이언트가 감지해 `pass` 또는 빈 답변 제출로 처리하고, 서버가 `ended_reason`을 확정.
+
+### 4.5 세션 저장
+
+별도 저장 엔드포인트 없음 — 세션은 파이프라인 진행에 따라 **자동 영속화**. 발표 1회 = `slides.json + transcript.json + Q&A 로그(질문/답변/페르소나/스킵) + 설정값`이 세션 리소스로 저장됩니다(A7·명세 준수).
+
+---
+
+## 5. 이전 발표 열람 & 분석 리포트
+
+### 5.1 열람 (탭 = 위 세션 하위 리소스 재사용)
+
+| 탭 | 데이터 |
+|---|---|
+| 스크립트 | `GET /sessions/{id}/transcript` |
+| Q&A 로그 | `GET /sessions/{id}/qna` |
+| 리포트 | `GET /sessions/{id}/report` |
+| 재생 | `recording.audio_url`, `question.tts.audio_url`, `answer.audio_url` |
+
+### 5.2 분석 리포트
+
+| Method | Path | 설명 |
+|---|---|---|
+| GET | `/sessions/{sessionId}/report` | 단일 세션 리포트(답변 품질·발표 습관) |
+| POST | `/sessions/{sessionId}/report/generate` | 수동 재생성(기본은 종료 시 자동) |
+| GET | `/teams/{teamId}/report/growth?range=all\|recent5` | 성장 리포트(회차 비교) |
+
+**GET /report 응답**
+```json
+{
+  "status": "ready",           // queued | processing | ready | failed
+  "answer_quality": {
+    "strong_types": ["big_picture", "basic_concept"],
+    "weak_types": ["detail_probe", "numeric_verification"]
+  },
+  "speaking_habits": {
+    "words_per_minute": 182,
+    "filler_word_count": 14,
+    "filler_words": [ { "word": "음", "count": 9 }, { "word": "어", "count": 5 } ],
+    "time_limit_seconds": 600, "actual_seconds": 663, "over_time": true
+  },
+  "insight": "필러 워드가 도입부에 몰려 있어요. 첫 1분 대본을 미리 정해두면 좋아요."
+}
+```
+
+**GET /report/growth 응답**
+```json
+{
+  "range": "all",
+  "series": [
+    { "session_id": "ses_1", "name": "1차 발표", "date": "2026-07-08", "weak_type_scores": { "detail_probe": 0.40 } },
+    { "session_id": "ses_2", "name": "2차 발표", "date": "2026-07-09", "weak_type_scores": { "detail_probe": 0.62 } }
+  ],
+  "insight": "디테일 추궁형 점수가 2회차 연속 올랐어요. 수치 검증형은 아직 준비가 필요해요."
+}
+```
+
+---
+
+## 6. 열거형 & 에러 코드
+
+### 6.1 Enums
+
+| Enum | 값 |
+|---|---|
+| `QuestionerPersona` | `egen`(에겐) · `teto`(테토) · `kkondae`(꼰대) · `mungcheong`(멍청) · `jammin`(잼민) |
+| `QuestionStrategy` | `detail_probe`(디테일 추궁형) · `big_picture`(큰그림형) · `basic_concept`(기초 개념형) · `numeric_verification`(수치 검증형) |
+| `SessionStatus` | `draft · recording · transcribing · generating_questions · qna · completed · failed` |
+| `AsyncStatus` | `queued · processing · succeeded · failed` (일부 리소스는 `ready` 사용) |
+| `SessionMode` | `realtime · upload` |
+
+### 6.2 주요 에러 코드
+
+| code | HTTP | 의미 |
+|---|---|---|
+| `UNAUTHORIZED` / `TOKEN_EXPIRED` | 401 | 미인증 / 액세스 만료(→refresh) |
+| `FORBIDDEN_NOT_LEADER` | 403 | 팀장 전용 작업 |
+| `TEAM_NOT_FOUND` / `SESSION_NOT_FOUND` | 404 | 리소스 없음 |
+| `INVITE_INVALID` / `INVITE_EXPIRED` | 409/410 | 초대 무효/만료 |
+| `FILE_TOO_LARGE` | 413 | 용량 초과 |
+| `UNSUPPORTED_MEDIA` | 415 | 형식 미지원 |
+| `UNPROCESSABLE_PDF` | 422 | 스캔본/텍스트 추출 불가 |
+| `STT_FAILED` / `TTS_FAILED` / `GENERATION_FAILED` | 503 | 모델·외부 API 오류(재시도) |
+| `EMAIL_NOT_VERIFIED` | 403 | 이메일 인증 미완료 |
+
+---
+
+## 7. 실시간/진행률 (선택적 확장)
+
+폴링(A2)이 기본이나, 진행률 UX가 중요한 화면은 아래를 선택 적용 가능:
+
+- **SSE**: `GET /sessions/{id}/events` → `material`, `transcript`, `qna`, `report` 상태 변화 스트림
+- **WebSocket**: 실시간 Q&A 세션(질문 push, 답변 결과 push)을 단일 커넥션으로 처리
+- 도입 시 위 폴링 엔드포인트는 폴백으로 유지.
+
+---
+
+## 8. 미결정 · 후속 논의
+
+- **데이터 보관 정책**(A10): 녹음/음성 원본 보관 기간·용량 상한, 세션 삭제 시 cascade 범위(명세 "발표 삭제 시 연관 데이터 함께 삭제" 반영됨).
+- **TTS 엔진 확정**(VoxCPM2 self-hosted): 동시성 한계 → 큐 깊이/대기시간 SLA, 페르소나별 음성 매핑.
+- **STT 엔진**: 한국어 지원·변환 소요시간(A4 폴링 간격 근거).
+- **질문 생성 프롬프트 전략**: '슬라이드에 있으나 미언급' / '언급했으나 근거 약함' 타게팅(명세) — 서버 내부 로직, API 계약엔 영향 없음.
+- **자동 로그인**: refresh 토큰 저장 위치(쿠키 vs 앱 secure storage)를 웹/모바일별로 확정.
+- **레이트리밋/쿼터**: 외부 LLM 비용 기반 상한.
+
+---
+
+## 부록 A. 기능명세서 ↔ 엔드포인트 추적표
+
+| 명세 대분류 | 기능 | 엔드포인트 |
+|---|---|---|
+| 애플리케이션 접속 | 로그인/소셜/자동로그인 | `POST /auth/login`, `/auth/login/social/{p}`, `/auth/refresh`, `GET /auth/me` |
+| | 회원가입(이메일 인증) | `POST /auth/signup`, `/auth/email/verify` |
+| | 아이디·비번 찾기 | (정적 화면, 엔드포인트 없음) |
+| 메인 | 팀 목록/추가 | `GET/POST /teams` |
+| | 마이페이지 | `GET/PATCH/DELETE /users/me` |
+| 프레젠테이션 팀 | 팀 만들기·초대(이메일/링크)·수락 | `POST /teams`, `/teams/{id}/invites`, `/invites/{token}/accept` |
+| | 팀 선택/탈퇴/삭제 | `GET /teams/{id}`, `POST /teams/{id}/leave`, `DELETE /teams/{id}` |
+| 발표 & 질의응답 | 발표자료 업로드/슬라이드 추출/전처리 상태 | `POST/GET /sessions/{id}/material` (+retry) |
+| | 발표 설정(페르소나·질의수·제한시간) | `POST /teams/{id}/sessions` |
+| | 발표하기(녹음)/녹음파일 업로드 | `POST /sessions/{id}/recording(/start)` |
+| | STT 변환 | `GET /sessions/{id}/transcript` |
+| | AI 질의 생성/페르소나 스타일 | `POST /sessions/{id}/qna/generate` |
+| | 질의 TTS 출력·재생/근거 표시 | `GET /qna/questions/{qid}` (`tts`, `evidence`) |
+| | 질의 답변(STT)/꼬리질문/종료/스킵 | `POST /answer`, `/pass`, `/qna/end` |
+| | 세션 저장 | (자동 영속화) |
+| 이전 발표 | 상세 열람/삭제/보관정책 | `GET /sessions/{id}` 하위, `DELETE /sessions/{id}` |
+| 내 발표 분석 | 답변품질/발표습관/성장리포트/생성시점 | `GET /sessions/{id}/report`, `GET /teams/{id}/report/growth` |
+| 마이페이지 | 계정 관리 | `/users/me` |
+| 공통 | 마이크 권한 | (클라이언트 전용) |
+| | 오류·이탈 처리 | 에러 포맷 §1.1, 이어하기 = 세션 상태 재조회 |
+
+## 부록 B. 와이어프레임 ↔ 엔드포인트
+
+| 화면(그룹) | 주요 호출 |
+|---|---|
+| 01 인증 | `/auth/*` |
+| 02 메인 | `GET /teams` |
+| 03 팀 | `POST /teams`, `/teams/{id}/invites*`, `/invites/{token}/*`, `DELETE /teams/{id}` |
+| 04 발표 준비 | `POST /teams/{id}/sessions`, `POST/GET /sessions/{id}/material` |
+| 05 발표 진행 | `POST /sessions/{id}/recording*`, `GET /sessions/{id}/transcript` |
+| 06 질의응답 | `POST /qna/generate`, `GET /qna`, `POST /answer|pass|end` |
+| 07 이전 발표 | `GET /sessions/{id}` (transcript·qna 탭), `DELETE /sessions/{id}` |
+| 08 분석 | `GET /sessions/{id}/report`, `GET /teams/{id}/report/growth` |
+| 09 마이페이지 | `/users/me*` |
+| 10 공통 | 에러/권한/이어하기 |
