@@ -164,7 +164,7 @@ npm run dev   # 또는 python main.py 등
 
 > 
 
-**이지민:**
+**이서진:**
 
 > 
 
