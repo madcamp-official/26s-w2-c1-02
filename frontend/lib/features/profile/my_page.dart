@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../state/auth_controller.dart';
+import '../common/app_back_button.dart';
 import '../common/responsive_page.dart';
 
 /// 마이페이지 (기능 명세 6): 계정 정보 확인 + 로그아웃.
@@ -16,7 +17,10 @@ class MyPage extends StatelessWidget {
     final user = auth.user;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('마이페이지')),
+      appBar: AppBar(
+        leading: const AppBackButton(),
+        title: const Text('마이페이지'),
+      ),
       body: SafeArea(
         child: ResponsivePage(
           child: ListView(

@@ -8,6 +8,7 @@ import '../../core/theme/app_colors.dart';
 import '../../data/models/audience_type.dart';
 import '../../state/speech_controller.dart';
 import '../../state/team_controller.dart';
+import '../common/app_back_button.dart';
 import '../common/responsive_page.dart';
 
 /// 발표 만들기 화면 (Figma: 발표 만들기 화면).
@@ -95,7 +96,9 @@ class _CreateSpeechPageState extends State<CreateSpeechPage> {
         context.watch<TeamController>().byId(widget.teamId)?.name ?? '';
 
     return Scaffold(
-      appBar: AppBar(),
+      appBar: AppBar(
+        leading: AppBackButton(fallbackLocation: '/teams/${widget.teamId}'),
+      ),
       body: SafeArea(
         child: ResponsivePage(
           child: ListView(

@@ -7,6 +7,7 @@ import '../../data/models/qna.dart';
 import '../../data/models/speech.dart';
 import '../../data/repositories/speech_repository.dart';
 import '../../state/speech_controller.dart';
+import '../common/app_back_button.dart';
 import '../common/responsive_page.dart';
 
 /// 질의응답 화면 (Figma: 질의응답 Q1/Q3/Q5).
@@ -81,9 +82,10 @@ class _QnaPageState extends State<QnaPage> {
     final title = _speech?.name ?? 'speech';
     final qNumber = _questions[_current].index;
     final professor = _speech?.audienceType.professorLabel ?? '교수';
+    final teamFallback = _speech != null ? '/teams/${_speech!.teamId}' : '/';
 
     return Scaffold(
-      appBar: AppBar(),
+      appBar: AppBar(leading: AppBackButton(fallbackLocation: teamFallback)),
       body: SafeArea(
         child: ResponsivePage(
           child: Column(

@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/models/speech.dart';
 import '../../state/speech_controller.dart';
+import '../common/app_back_button.dart';
 import '../common/responsive_page.dart';
 
 /// 발표중 화면 (Figma: 발표중 화면 / 제한시간 초과 / 질의응답 여부 확인).
@@ -73,8 +74,9 @@ class _PresentingPageState extends State<PresentingPage> {
   @override
   Widget build(BuildContext context) {
     final title = _speech?.name ?? 'speech';
+    final teamFallback = _speech != null ? '/teams/${_speech!.teamId}' : '/';
     return Scaffold(
-      appBar: AppBar(),
+      appBar: AppBar(leading: AppBackButton(fallbackLocation: teamFallback)),
       body: SafeArea(
         child: ResponsivePage(
           child: _phase == _Phase.presenting

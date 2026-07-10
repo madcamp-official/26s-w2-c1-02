@@ -7,6 +7,7 @@ import '../../data/models/speech.dart';
 import '../../data/models/team.dart';
 import '../../state/speech_controller.dart';
 import '../../state/team_controller.dart';
+import '../common/app_back_button.dart';
 import '../common/responsive_page.dart';
 
 /// 프레젠테이션 팀 화면 (Figma: 프레젠테이션 팀 화면).
@@ -35,7 +36,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
         context.watch<SpeechController>().speechesOf(widget.teamId);
 
     return Scaffold(
-      appBar: AppBar(),
+      appBar: AppBar(leading: const AppBackButton()),
       body: SafeArea(
         child: ResponsivePage(
           child: Column(

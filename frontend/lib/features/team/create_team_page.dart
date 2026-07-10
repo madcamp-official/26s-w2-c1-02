@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/models/presentation_type.dart';
 import '../../state/team_controller.dart';
+import '../common/app_back_button.dart';
+import '../common/fade_slide_in.dart';
 import '../common/responsive_page.dart';
 
 /// 새 프레젠테이션 만들기 (Figma: 새 프레젠테이션 만들기 1~3).
@@ -73,7 +75,7 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
     final canSubmit = _nameConfirmed && _typeConfirmed && _type != null;
 
     return Scaffold(
-      appBar: AppBar(),
+      appBar: AppBar(leading: const AppBackButton()),
       body: SafeArea(
         child: ResponsivePage(
           child: ListView(
@@ -109,76 +111,95 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                 child: _ConfirmChip(label: '확인', onTap: _confirmName),
               ),
 
-              // 2) 프레젠테이션 유형 (팀 이름 확정 후 노출)
-              if (_nameConfirmed) ...[
-                const SizedBox(height: 24),
-                const Text('어떤 프레젠테이션인가요?',
-                    style: TextStyle(fontSize: 16)),
-                const SizedBox(height: 12),
-                ...PresentationType.values.map(
-                  (t) => _SelectableTile(
-                    label: t.label,
-                    selected: _type == t,
-                    onTap: () => setState(() {
-                      _type = t;
-                      _typeConfirmed = false;
-                    }),
+              // 2) 프레젠테이션 유형 — 팀 이름 확정 후 fade-in + slide-up
+              if (_nameConfirmed)
+                FadeSlideIn(
+                  // key로 단계를 구분해 다시 build돼도 애니메이션이 유지되게 함.
+                  key: const ValueKey('step-type'),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 24),
+                      const Text('어떤 프레젠테이션인가요?',
+                          style: TextStyle(fontSize: 16)),
+                      const SizedBox(height: 12),
+                      ...PresentationType.values.map(
+                        (t) => _SelectableTile(
+                          label: t.label,
+                          selected: _type == t,
+                          onTap: () => setState(() {
+                            _type = t;
+                            _typeConfirmed = false;
+                          }),
+                        ),
+                      ),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: _ConfirmChip(
+                          label: '확인',
+                          onTap: _type == null
+                              ? null
+                              : () => setState(() => _typeConfirmed = true),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: _ConfirmChip(
-                    label: '확인',
-                    onTap: _type == null
-                        ? null
-                        : () => setState(() => _typeConfirmed = true),
-                  ),
-                ),
-              ],
 
-              // 3) 팀원 초대 (유형 확정 후 노출)
-              if (_typeConfirmed) ...[
-                const SizedBox(height: 24),
-                const Text('프레젠테이션을 함께할 팀원이 있나요?',
-                    style: TextStyle(fontSize: 16)),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    ..._invitedMembers.map((m) => Chip(
-                          label: Text(m),
-                          onDeleted: () =>
-                              setState(() => _invitedMembers.remove(m)),
-                        )),
-                    _InviteButton(onTap: _showInviteDialog),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  '팀원이 초대를 수락하면 자동으로 프레젠테이션 팀에 초대돼요.\n'
-                  '프레젠테이션 팀을 만든 후에도 팀원을 초대할 수 있어요.',
-                  style:
-                      TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                ),
-              ],
-
-              const SizedBox(height: 48),
-              SizedBox(
-                height: 56,
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(28)),
+              // 3) 팀원 초대 + 팀 만들기 버튼 — 마지막 단계에서만 fade-in + slide-up
+              if (_typeConfirmed)
+                FadeSlideIn(
+                  key: const ValueKey('step-invite'),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 24),
+                      const Text('프레젠테이션을 함께할 팀원이 있나요?',
+                          style: TextStyle(fontSize: 16)),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          ..._invitedMembers.map((m) => Chip(
+                                label: Text(m),
+                                onDeleted: () =>
+                                    setState(() => _invitedMembers.remove(m)),
+                              )),
+                          _InviteButton(onTap: _showInviteDialog),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        '팀원이 초대를 수락하면 자동으로 프레젠테이션 팀에 초대돼요.\n'
+                        '프레젠테이션 팀을 만든 후에도 팀원을 초대할 수 있어요.',
+                        style: TextStyle(
+                            fontSize: 12, color: AppColors.textSecondary),
+                      ),
+                      const SizedBox(height: 48),
+                      // "프레젠테이션 팀 만들기"는 마지막 단계에서만 등장.
+                      SizedBox(
+                        width: double.infinity,
+                        height: 56,
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(28)),
+                          ),
+                          onPressed:
+                              canSubmit && !_submitting ? _submit : null,
+                          child: Text(
+                              _submitting ? '만드는 중…' : '프레젠테이션 팀 만들기',
+                              style: const TextStyle(
+                                  fontSize: 17, fontWeight: FontWeight.w700)),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                   ),
-                  onPressed: canSubmit && !_submitting ? _submit : null,
-                  child: Text(_submitting ? '만드는 중…' : '프레젠테이션 팀 만들기',
-                      style: const TextStyle(
-                          fontSize: 17, fontWeight: FontWeight.w700)),
                 ),
-              ),
             ],
           ),
         ),
