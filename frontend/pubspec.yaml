@@ -1,0 +1,31 @@
+name: rehearsal
+description: "Rehearsal.io — LLM 기반 프레젠테이션 질의응답 생성/분석 서비스"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Routing (web URL-aware, deep-linkable)
+  go_router: ^14.6.2
+
+  # State management
+  provider: ^6.1.2
+
+  # Networking
+  http: ^1.2.2
+
+  # File picking (PDF upload) — supports web/android/ios
+  file_picker: ^8.1.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
