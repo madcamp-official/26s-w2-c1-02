@@ -31,8 +31,8 @@
 ## 선택 옵션
 
 - [ ] 실시간 인터랙션
-- [ ] LLM Wrapper
-- [ ] Cross-Platform
+- [x] LLM Wrapper
+- [x] Cross-Platform
 
 ---
 
@@ -52,7 +52,7 @@
 
 | 날짜 | 목표 |
 |---|---|
-| Day 1 |  |
+| Day 1 | 주제 선정 |
 | Day 2 |  |
 | Day 3 |  |
 | Day 4 |  |
