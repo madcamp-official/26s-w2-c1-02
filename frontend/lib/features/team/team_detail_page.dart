@@ -104,7 +104,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     await Clipboard.setData(ClipboardData(text: link.url));
     if (mounted) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('초대 링크 복사됨: ${link.url}')));
+          .showSnackBar(SnackBar(content: Text('초대 링크가 클립보드에 복사됐어요')));
     }
   }
 

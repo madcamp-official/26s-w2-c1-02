@@ -14,8 +14,8 @@ enum QuestionerPersona {
   final String wire;
   final String label;
 
-  /// 질의응답 화면의 캐릭터 이름 (예: "꼰대 교수").
-  String get professorLabel => '$label 교수';
+  /// 질의응답 화면의 캐릭터 이름 (예: "꼰대교수").
+  String get professorLabel => '$label교수';
 
   static QuestionerPersona fromWire(String w) =>
       values.firstWhere((e) => e.wire == w, orElse: () => egen);

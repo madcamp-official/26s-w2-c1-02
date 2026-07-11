@@ -178,7 +178,7 @@ class _CreateSessionPageState extends State<CreateSessionPage> {
               const SizedBox(height: 20),
 
               // 질문자 성격 (중복 선택)
-              const Text('질문자 성격 (중복 선택)',
+              const Text('질문자 성격 (중복 가능)',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
               Wrap(

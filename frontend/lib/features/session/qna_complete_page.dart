@@ -32,9 +32,11 @@ class QnaCompletePage extends StatelessWidget {
               return Column(
                 children: [
                   const Spacer(),
-                  const Text('질의응답이 끝났어요 👏',
+                  const Text('질의응답이 끝났어요!\n수고하셨어요 🎉',
                       style:
-                          TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+                          TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                      textAlign: TextAlign.center,
+                      ),
                   const SizedBox(height: 32),
                   if (!ready) ...[
                     const CircularProgressIndicator(color: AppColors.accent),
