@@ -212,7 +212,7 @@ OOM이나 admission 지연이 나면 KV 캡을 1GiB씩 올리고, TTS+STT 합이
 
 1. **ForcedAligner는 오디오 1건당 최대 5분.** 60분 발표 녹음은 백엔드에서 5분 이하 청크로 잘라 `/transcribe`에 순차 요청하고, 각 청크의 타임스탬프에 오프셋을 더해 합칠 것.
 2. **STT 서버는 요청을 직렬 처리** (락 사용). 발표 전사(긴 작업) 중에 답변 전사(짧은 작업)가 오면 대기함. 명세의 비동기 폴링 구조(§1.2)와는 잘 맞지만, 동시 사용자가 늘면 백엔드에 작업 큐 필요.
-3. **TTS 음성(voice) 파라미터**: 페르소나별 음성 매핑(에겐/테토/꼰대/멍청/잼민)은 voice design 작업 후 확정. **지금은 `default` 하나뿐**(서버가 그 외 voice는 `400 Invalid voice`로 거부). 설계·설치법은 [persona_voices.md](persona_voices.md). VoxCPM2는 지시(instruction)로 말투를 못 바꾸는 **레퍼런스 오디오 클로닝 전용**이라 페르소나 5종은 각각 레퍼런스 wav가 있어야 만들 수 있다(자산 미확보 상태).
+3. **TTS 음성(voice) 파라미터**: 페르소나 5종(에겐/테토/꼰대/멍청/잼민) **캐리커처 음색 등록 완료** — `voice="egen"` 등으로 200 반환, 5종 음색 구별됨(`custom_voice_dir`, `build_persona_voices.sh`로 생성). 백엔드는 `persona→voice` 1:1 매핑 후 실패 시 `default` 폴백. **한계:** VoxCPM2는 지시 불가·레퍼런스 클로닝 전용이며 레퍼런스 절대 피치를 전이하지 않아, "노인은 낮게/아이는 높게" 방향 제어가 안 됨(kkondae가 높게 나옴). 방향까지 맞추려면 출력단 결정론적 DSP(래퍼/백엔드) 필요. 설계·실측·후속안: [persona_voices.md](persona_voices.md).
 
 ## 참고 문서
 

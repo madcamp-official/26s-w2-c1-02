@@ -24,6 +24,24 @@ export CUDA_VISIBLE_DEVICES=0
 #   더 줄이려면 이 값을 낮추면 됨(예: 3GiB=3221225472). OOM이면 다시 올린다.
 KV_CACHE_BYTES="${TTS_KV_CACHE_BYTES:-4294967296}"  # 4 GiB
 
+# 페르소나 음성(custom voice) 등록 — VoxCPM2는 지시 불가·레퍼런스 클로닝 전용이라
+# 사전계산한 프로파일 디렉터리(voices/profiles)를 deploy YAML의 top-level
+# `custom_voice_dir`로 넘긴다(전용 CLI 플래그 없음, hf_overrides는 건드리지 않음).
+# 프로파일이 있으면 벤더 YAML에 경로를 idempotent하게 주입(재설치/이전 후 self-heal).
+# 프로파일 제작: bash build_persona_voices.sh (설계: persona_voices.md)
+VOICES_DIR="$(pwd)/voices/profiles"
+DEPLOY_YAML="vllm-omni/vllm_omni/deploy/voxcpm2.yaml"
+if [ -f "$VOICES_DIR/custom_voice_manifest.json" ] && [ -f "$DEPLOY_YAML" ]; then
+  if grep -qE '^custom_voice_dir:' "$DEPLOY_YAML"; then
+    sed -i "s|^custom_voice_dir:.*|custom_voice_dir: $VOICES_DIR|" "$DEPLOY_YAML"
+  else
+    printf '\ncustom_voice_dir: %s\n' "$VOICES_DIR" >> "$DEPLOY_YAML"
+  fi
+  echo "[start_tts] custom_voice_dir=$VOICES_DIR ($(python -c "import json;print(','.join(json.load(open('$VOICES_DIR/custom_voice_manifest.json'))['voices']))"))"
+else
+  echo "[start_tts] no persona profiles found → 'default' voice만 사용 (voices/profiles 비어 있음)"
+fi
+
 vllm serve openbmb/VoxCPM2 --omni \
   --host 0.0.0.0 \
   --port 8100 \
