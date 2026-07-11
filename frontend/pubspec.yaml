@@ -43,3 +43,12 @@ flutter:
           weight: 600
         - asset: assets/fonts/Pretendard-Bold.otf
           weight: 700
+
+    - family: NanumSquareRound
+      fonts:
+        - asset: assets/fonts/NanumSquareRoundOTFR.otf
+          weight: 400
+        - asset: assets/fonts/NanumSquareRoundOTFB.otf
+          weight: 400
+        - asset: assets/fonts/NanumSquareRoundOTFEB.otf
+          weight: 400
