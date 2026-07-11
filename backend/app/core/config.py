@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     # PostgreSQL 접속 URL (.env의 DATABASE_URL). 미설정 시 로컬 개발 기본값.
     database_url: str = "postgresql+psycopg://rehearsal:rehearsal123@localhost:5432/rehearsal_dev"
 
+    # JWT 서명 시크릿. 반드시 .env에서 각자 값으로 설정할 것 (기본값은 개발용 임시값).
+    # 생성: python -c "import secrets; print(secrets.token_hex(32))"
+    jwt_secret: str = "INSECURE-DEV-ONLY-CHANGE-ME-IN-ENV"
+    # access 토큰 수명(초). api-spec §2 응답의 expires_in과 일치해야 함.
+    jwt_access_expires_seconds: int = 900
+
     # LLM 제공자 선택 (mock | gemini)
     llm_provider: str = "mock"
     gemini_api_key: str = ""
