@@ -8,8 +8,7 @@ import '../../state/auth_controller.dart';
 import '../../state/team_controller.dart';
 import '../common/responsive_page.dart';
 
-/// 메인페이지 (Figma: 메인페이지).
-/// "user님, 반가워요" + 내 프레젠테이션 팀 목록 + 추가 FAB + 마이페이지 진입.
+/// 메인 페이지 (와이어프레임 b1) — 내 팀 목록 + 팀 추가 + 마이페이지 진입.
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -34,6 +33,9 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       appBar: AppBar(
+        title: const Text('Rehearsal.io',
+            style: TextStyle(
+                fontWeight: FontWeight.w800, color: AppColors.accent)),
         actions: [
           IconButton(
             tooltip: '마이페이지',
@@ -44,9 +46,8 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
+        backgroundColor: AppColors.accent,
+        foregroundColor: Colors.white,
         onPressed: () => context.push('/teams/new'),
         child: const Icon(Icons.add),
       ),
@@ -55,7 +56,7 @@ class _HomePageState extends State<HomePage> {
           child: RefreshIndicator(
             onRefresh: () => context.read<TeamController>().load(),
             child: ListView(
-              padding: const EdgeInsets.only(top: 24, bottom: 96),
+              padding: const EdgeInsets.only(top: 16, bottom: 96),
               children: [
                 Text('$userName님, 반가워요',
                     style: const TextStyle(
@@ -63,7 +64,7 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(height: 8),
                 const Text('내 프레젠테이션 팀',
                     style: TextStyle(
-                        fontSize: 16, color: AppColors.textSecondary)),
+                        fontSize: 14, color: AppColors.textSecondary)),
                 const SizedBox(height: 16),
                 if (teamCtrl.loading && teamCtrl.teams.isEmpty)
                   const Padding(
@@ -88,7 +89,7 @@ class _TeamCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.only(bottom: 16),
       child: Material(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
@@ -96,19 +97,25 @@ class _TeamCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           onTap: () => context.push('/teams/${team.id}'),
           child: Container(
-            height: 150,
             width: double.infinity,
             padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Row(
               children: [
-                Text(team.name,
-                    style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w800)),
-                const SizedBox(height: 4),
-                Text(team.membersLabel,
-                    style: const TextStyle(
-                        fontSize: 13, color: AppColors.textSecondary)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(team.name,
+                          style: const TextStyle(
+                              fontSize: 17, fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 4),
+                      Text('${team.membersLabel} · 발표 ${team.sessionCount}회',
+                          style: const TextStyle(
+                              fontSize: 13, color: AppColors.textSecondary)),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, color: AppColors.hint),
               ],
             ),
           ),

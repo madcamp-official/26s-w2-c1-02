@@ -1,19 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'core/config/env.dart';
+import 'core/network/api_client.dart';
+import 'core/network/http_backend.dart';
+import 'core/network/mock_backend.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'data/repositories/auth_repository.dart';
-import 'data/repositories/speech_repository.dart';
+import 'data/repositories/session_repository.dart';
 import 'data/repositories/team_repository.dart';
 import 'state/auth_controller.dart';
-import 'state/speech_controller.dart';
+import 'state/session_controller.dart';
 import 'state/team_controller.dart';
 
-/// 앱 루트: repository/controller 주입 + 라우터 구성.
+/// 앱 루트: 백엔드/ApiClient/repository/controller 조립.
 ///
-/// 지금은 Mock repository를 주입한다. 백엔드 연동 시
-/// 이 부분만 Api* repository로 교체하면 화면 코드는 그대로 동작한다.
+/// Mock ↔ 실서버 전환은 [HttpBackend] 주입 하나로 결정된다
+/// (`--dart-define=USE_MOCK=false`). 인터셉터·repository·화면 코드는
+/// 두 모드에서 완전히 동일한 경로를 탄다 (workflow 공통 가이드 2).
 class RehearsalApp extends StatefulWidget {
   const RehearsalApp({super.key});
 
@@ -22,17 +27,24 @@ class RehearsalApp extends StatefulWidget {
 }
 
 class _RehearsalAppState extends State<RehearsalApp> {
+  late final ApiClient _api;
   late final AuthController _auth;
   late final TeamController _teams;
-  late final SpeechController _speeches;
+  late final SessionController _sessions;
   late final AppRouter _router;
 
   @override
   void initState() {
     super.initState();
-    _auth = AuthController(MockAuthRepository());
-    _teams = TeamController(MockTeamRepository());
-    _speeches = SpeechController(MockSpeechRepository());
+    final HttpBackend backend = Env.useMockData
+        ? (MockBackend()..seeded())
+        : RealHttpBackend(baseUrl: '${Env.apiBaseUrl}/api/v1');
+    _api = ApiClient(backend: backend);
+
+    _auth = AuthController(AuthRepository(_api));
+    _teams = TeamController(TeamRepository(_api));
+    _sessions = SessionController(SessionRepository(_api));
+    _api.onAuthExpired = _auth.handleAuthExpired;
     _router = AppRouter(_auth);
   }
 
@@ -40,7 +52,7 @@ class _RehearsalAppState extends State<RehearsalApp> {
   void dispose() {
     _auth.dispose();
     _teams.dispose();
-    _speeches.dispose();
+    _sessions.dispose();
     super.dispose();
   }
 
@@ -48,9 +60,12 @@ class _RehearsalAppState extends State<RehearsalApp> {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        Provider.value(value: _api),
+        Provider(create: (_) => SessionRepository(_api)),
+        Provider(create: (_) => TeamRepository(_api)),
         ChangeNotifierProvider.value(value: _auth),
         ChangeNotifierProvider.value(value: _teams),
-        ChangeNotifierProvider.value(value: _speeches),
+        ChangeNotifierProvider.value(value: _sessions),
       ],
       child: MaterialApp.router(
         title: 'Rehearsal.io',

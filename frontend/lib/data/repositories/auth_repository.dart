@@ -1,39 +1,55 @@
+import '../../core/network/api_client.dart';
 import '../models/app_user.dart';
+import '../models/auth.dart';
+import '../models/enums.dart';
 
-/// 인증 데이터 소스 추상화.
-///
-/// 지금은 [MockAuthRepository]로 더미 로그인만 제공한다.
-/// 추후 카카오/구글 OAuth 또는 이메일 로그인으로 교체 시
-/// 이 인터페이스를 구현하는 ApiAuthRepository를 붙이면 된다.
-abstract class AuthRepository {
-  Future<AppUser> login({String? id, String? password});
-  Future<AppUser> loginWithProvider(String provider);
-  Future<void> logout();
-}
+/// 인증 리포지토리 — ApiClient(백엔드 추상화) 경유 단일 구현.
+/// Mock/실서버 전환은 백엔드 주입으로 결정되므로 별도 Mock 클래스가 없다.
+class AuthRepository {
+  AuthRepository(this._api);
 
-class MockAuthRepository implements AuthRepository {
-  @override
-  Future<AppUser> login({String? id, String? password}) async {
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    return const AppUser(
-      id: 'u_1',
-      name: 'user',
-      email: 'user@rehearsal.io',
-    );
+  final ApiClient _api;
+
+  Future<AuthTokens> login({
+    required String username,
+    required String password,
+  }) =>
+      _api.login('/auth/login', {'username': username, 'password': password});
+
+  Future<AuthTokens> loginWithSocial(SocialProvider provider, String idToken) =>
+      _api.login('/auth/login/social/${provider.wire}', {'id_token': idToken});
+
+  Future<void> signup({
+    required String name,
+    required String username,
+    required String password,
+    required String email,
+  }) =>
+      _api.post('/auth/signup', body: {
+        'name': name,
+        'username': username,
+        'password': password,
+        'email': email,
+      });
+
+  Future<void> verifyEmail(String email, String code) =>
+      _api.post('/auth/email/verify', body: {'email': email, 'code': code});
+
+  Future<AppUser> me() async {
+    final json = await _api.get('/auth/me') as Map<String, dynamic>;
+    return AppUser.fromJson(json['user'] as Map<String, dynamic>);
   }
 
-  @override
-  Future<AppUser> loginWithProvider(String provider) async {
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    return AppUser(
-      id: 'u_$provider',
-      name: 'user',
-      email: 'user@$provider.com',
-    );
-  }
+  Future<void> logout() => _api.logout();
 
-  @override
-  Future<void> logout() async {
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-  }
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) =>
+      _api.patch('/users/me/password', body: {
+        'current_password': currentPassword,
+        'new_password': newPassword,
+      });
+
+  Future<void> deleteAccount() => _api.delete('/users/me');
 }

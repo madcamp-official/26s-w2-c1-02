@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 
-import '../data/models/presentation_type.dart';
 import '../data/models/team.dart';
 import '../data/repositories/team_repository.dart';
 
@@ -25,27 +24,27 @@ class TeamController extends ChangeNotifier {
   Future<void> load() async {
     _loading = true;
     notifyListeners();
-    _teams = await _repo.fetchTeams();
-    _loading = false;
-    notifyListeners();
+    try {
+      _teams = await _repo.fetchTeams();
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
   }
 
-  Future<Team> create({
-    required String name,
-    required PresentationType type,
-    required List<String> memberNames,
-  }) async {
-    final team = await _repo.createTeam(
-      name: name,
-      type: type,
-      memberNames: memberNames,
-    );
+  Future<Team> create(String name) async {
+    final team = await _repo.createTeam(name);
     await load();
     return team;
   }
 
   Future<void> leave(String id) async {
     await _repo.leaveTeam(id);
+    await load();
+  }
+
+  Future<void> deleteTeam(String id) async {
+    await _repo.deleteTeam(id);
     await load();
   }
 }
