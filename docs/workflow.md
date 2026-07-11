@@ -51,8 +51,8 @@
 ### 팀원3 (AI Pipeline)
 
 - [ ] GPU 서버 셋업: `setup_tts.sh` / `setup_stt.sh` → `test_servers.sh` 왕복 테스트 통과
-- [ ] 한국어 STT 실측: 5분 오디오 변환 소요시간 기록 (→ 폴링 간격·UX 근거, spec §8)
-- [ ] VoxCPM2 페르소나 voice design 시작 — 5종(에겐/테토/꼰대/멍청/잼민) 참조 wav 제작 (현재 `default` 하나뿐, infra README 제약 3)
+- [x] 한국어 STT 실측: 5분 오디오 변환 소요시간 기록 (→ 폴링 간격·UX 근거, spec §8) — 실측 완료(2026-07-11): 5분 ~9.7s, RTF≈0.03~0.05. 청크 **60s+4s 겹침** 확정. 표: [infra README](../infra/gpu-server/README.md#stt-실측--청크-크기-결정-day-3-팀원3)
+- [~] VoxCPM2 페르소나 voice design 시작 — 5종(에겐/테토/꼰대/멍청/잼민) 설계 완료([persona_voices.md](../infra/gpu-server/persona_voices.md)): 밈 리서치 + 음색/레퍼런스 스크립트 + 설치법. **차단: VoxCPM2는 지시 불가·레퍼런스 클로닝 전용 → 페르소나별 레퍼런스 wav 필요(미확보). 오디오 확보 방식 결정 대기**
 - [ ] 외부 LLM API 키 발급 + `LLMProvider` 추상화에 실제 제공자 1개 연결 (헬로월드 수준)
 
 ---

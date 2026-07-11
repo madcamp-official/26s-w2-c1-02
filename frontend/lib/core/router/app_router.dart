@@ -1,17 +1,29 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/auth/account_recovery_page.dart';
 import '../../features/auth/login_page.dart';
+import '../../features/auth/signup_page.dart';
+import '../../features/common/placeholder_page.dart';
 import '../../features/home/home_page.dart';
 import '../../features/profile/my_page.dart';
-import '../../features/speech/create_speech_page.dart';
-import '../../features/speech/presenting_page.dart';
-import '../../features/speech/qna_page.dart';
+import '../../features/session/create_session_page.dart';
+import '../../features/session/material_status_page.dart';
+import '../../features/session/presenting_page.dart';
+import '../../features/session/processing_page.dart';
+import '../../features/session/qna_complete_page.dart';
+import '../../features/session/qna_confirm_page.dart';
+import '../../features/session/qna_page.dart';
 import '../../features/team/create_team_page.dart';
+import '../../features/team/invite_accept_page.dart';
 import '../../features/team/team_detail_page.dart';
 import '../../state/auth_controller.dart';
 
-/// 앱 라우팅. go_router 사용 → 웹에서 URL 딥링크/뒤로가기까지 지원.
+/// 앱 라우팅 — 와이어프레임 28화면 ↔ 라우트 매핑 (workflow Step 1).
+///
+/// 다이얼로그/바텀시트류(c4 팀관리, g3 삭제확인, i3 탈퇴확인, j1 마이크권한,
+/// j2 오류·이탈)는 라우트가 아니라 해당 화면에서 띄우는 오버레이로 구현한다.
+/// variants(d2 상태 3종, e1 시간초과, f1~f3 질문 상태)는 한 라우트의 상태다.
 class AppRouter {
   AppRouter(this.auth);
 
@@ -21,55 +33,118 @@ class AppRouter {
     initialLocation: '/',
     refreshListenable: auth,
     redirect: (context, state) {
-      final loggingIn = state.matchedLocation == '/login';
-      if (!auth.isLoggedIn) return loggingIn ? null : '/login';
-      if (loggingIn) return '/';
+      final loc = state.matchedLocation;
+      // 초대 미리보기는 인증 불필요 (spec §3.1 H)
+      final isPublic = loc == '/login' ||
+          loc == '/signup' ||
+          loc == '/account-recovery' ||
+          loc.startsWith('/invites/');
+      if (!auth.isLoggedIn && !isPublic) return '/login';
+      if (auth.isLoggedIn && (loc == '/login' || loc == '/signup')) return '/';
       return null;
     },
     routes: [
+      // ---- 01 인증 ----
+      GoRoute(path: '/login', builder: (_, _) => const LoginPage()),
+      GoRoute(path: '/signup', builder: (_, _) => const SignupPage()),
       GoRoute(
-        path: '/login',
-        name: 'login',
-        builder: (context, state) => const LoginPage(),
-      ),
+          path: '/account-recovery',
+          builder: (_, _) => const AccountRecoveryPage()),
+
+      // ---- 02 메인 ----
+      GoRoute(path: '/', builder: (_, _) => const HomePage()),
+
+      // ---- 09 마이페이지 ----
+      GoRoute(path: '/me', builder: (_, _) => const MyPage()),
       GoRoute(
-        path: '/',
-        name: 'home',
-        builder: (context, state) => const HomePage(),
+        path: '/me/password',
+        builder: (_, _) => const PlaceholderPage(
+          title: '비밀번호 변경',
+          wireframe: '09 마이페이지 (i2)',
+          plannedStep: 'Step 4 (Day 6)',
+        ),
       ),
+      // ---- 08 분석 (성장 리포트) ----
       GoRoute(
-        path: '/me',
-        name: 'myPage',
-        builder: (context, state) => const MyPage(),
+        path: '/me/growth',
+        builder: (_, _) => const PlaceholderPage(
+          title: '성장 리포트',
+          wireframe: '08 분석 (h2)',
+          plannedStep: 'Step 4 (Day 6)',
+          description: 'GET /users/me/report/growth — 회차별 type_scores 비교',
+        ),
       ),
-      GoRoute(
-        path: '/teams/new',
-        name: 'createTeam',
-        builder: (context, state) => const CreateTeamPage(),
-      ),
+
+      // ---- 03 팀 ----
+      GoRoute(path: '/teams/new', builder: (_, _) => const CreateTeamPage()),
       GoRoute(
         path: '/teams/:teamId',
-        name: 'teamDetail',
-        builder: (context, state) =>
-            TeamDetailPage(teamId: state.pathParameters['teamId']!),
+        builder: (_, s) => TeamDetailPage(teamId: s.pathParameters['teamId']!),
       ),
       GoRoute(
-        path: '/teams/:teamId/speeches/new',
-        name: 'createSpeech',
-        builder: (context, state) =>
-            CreateSpeechPage(teamId: state.pathParameters['teamId']!),
+        path: '/invites/:token',
+        builder: (_, s) => InviteAcceptPage(token: s.pathParameters['token']!),
+      ),
+
+      // ---- 04 발표 준비 ----
+      GoRoute(
+        path: '/teams/:teamId/sessions/new',
+        builder: (_, s) =>
+            CreateSessionPage(teamId: s.pathParameters['teamId']!),
       ),
       GoRoute(
-        path: '/speeches/:speechId/present',
-        name: 'present',
-        builder: (context, state) =>
-            PresentingPage(speechId: state.pathParameters['speechId']!),
+        path: '/sessions/:sessionId/material',
+        builder: (_, s) =>
+            MaterialStatusPage(sessionId: s.pathParameters['sessionId']!),
       ),
       GoRoute(
-        path: '/speeches/:speechId/qna',
-        name: 'qna',
-        builder: (context, state) =>
-            QnaPage(speechId: state.pathParameters['speechId']!),
+        path: '/sessions/:sessionId/upload-recording',
+        builder: (_, _) => const PlaceholderPage(
+          title: '녹음 파일 업로드',
+          wireframe: '04 발표 준비 (d3)',
+          plannedStep: 'Step 2 (Day 4)',
+          description: 'mode=upload 세션의 mp3/wav/m4a 업로드 경로',
+        ),
+      ),
+
+      // ---- 05 발표 진행 ----
+      GoRoute(
+        path: '/sessions/:sessionId/present',
+        builder: (_, s) =>
+            PresentingPage(sessionId: s.pathParameters['sessionId']!),
+      ),
+      GoRoute(
+        path: '/sessions/:sessionId/processing',
+        builder: (_, s) =>
+            ProcessingPage(sessionId: s.pathParameters['sessionId']!),
+      ),
+      GoRoute(
+        path: '/sessions/:sessionId/qna-confirm',
+        builder: (_, s) =>
+            QnaConfirmPage(sessionId: s.pathParameters['sessionId']!),
+      ),
+
+      // ---- 06 질의응답 ----
+      GoRoute(
+        path: '/sessions/:sessionId/qna',
+        builder: (_, s) => QnaPage(sessionId: s.pathParameters['sessionId']!),
+      ),
+      GoRoute(
+        path: '/sessions/:sessionId/qna/complete',
+        builder: (_, s) =>
+            QnaCompletePage(sessionId: s.pathParameters['sessionId']!),
+      ),
+
+      // ---- 07 이전 발표 (상세: 스크립트/Q&A/리포트 탭) ----
+      GoRoute(
+        path: '/sessions/:sessionId',
+        builder: (_, s) => PlaceholderPage(
+          title: '발표 상세',
+          wireframe: '07 이전 발표 (g1·g2) + 08 리포트 (h1) 탭',
+          plannedStep: 'Step 4 (Day 6)',
+          description: '세션 ${s.pathParameters['sessionId']} — '
+              'transcript / qna / report 탭',
+        ),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(

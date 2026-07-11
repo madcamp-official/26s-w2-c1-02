@@ -10,8 +10,8 @@ class AppColors {
   static const Color hint = Color(0xFFAAAAAA);
 
   /// 카드/입력 박스의 옅은 회색.
-  static const Color surface = Color(0xFFE3E3E3);
-  static const Color surfaceAlt = Color(0xFFEDEDED);
+  static const Color surface = Color(0xFFF2F4F6);
+  static const Color surfaceAlt = Color(0xFFF7F8FA);
   static const Color border = Color(0xFF111111);
 
   /// 주요 CTA(검정 버튼): "발표 시작하기", "프레젠테이션 팀 만들기".
@@ -19,7 +19,7 @@ class AppColors {
   static const Color onPrimary = Color(0xFFFFFFFF);
 
   /// 발표/질의응답 강조색(앰버): "발표 마치기", "질의응답으로 넘어가기".
-  static const Color accent = Color(0xFFFFA726);
+  static const Color accent = Color(0xFFFFAA00);
 
   /// 위험/시간초과: "팀 나가기", 발표시간 초과 타이머.
   static const Color danger = Color(0xFFF52222);

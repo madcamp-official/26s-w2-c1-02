@@ -3,10 +3,12 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../data/models/enums.dart';
 import '../../state/auth_controller.dart';
 import '../common/responsive_page.dart';
 
-/// 로그인 / 회원가입 화면 (Figma: 로그인 화면).
+/// 로그인 (와이어프레임 a1).
+/// 소셜은 구글 1종만 동작(우선순위 '선택'), 카카오/네이버는 자리만 (README 구현 명세서).
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -15,24 +17,34 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _idController = TextEditingController();
-  final _pwController = TextEditingController();
+  final _usernameController = TextEditingController(text: 'junseo');
+  final _pwController = TextEditingController(text: 'password');
 
   @override
   void dispose() {
-    _idController.dispose();
+    _usernameController.dispose();
     _pwController.dispose();
     super.dispose();
   }
 
-  Future<void> _login({String? provider}) async {
+  Future<void> _login() async {
     final auth = context.read<AuthController>();
-    if (provider != null) {
-      await auth.loginWithProvider(provider);
-    } else {
-      await auth.login(id: _idController.text, password: _pwController.text);
-    }
+    await auth.login(
+      username: _usernameController.text.trim(),
+      password: _pwController.text,
+    );
     if (mounted && auth.isLoggedIn) context.go('/');
+  }
+
+  Future<void> _loginGoogle() async {
+    final auth = context.read<AuthController>();
+    await auth.loginWithSocial(SocialProvider.google);
+    if (mounted && auth.isLoggedIn) context.go('/');
+  }
+
+  void _notSupported(String name) {
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$name 로그인은 이번 범위에서 자리만 있어요 (구글만 지원 예정)')));
   }
 
   @override
@@ -47,72 +59,76 @@ class _LoginPageState extends State<LoginPage> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const SizedBox(height: 48),
-                // 로고 자리 (Figma "아이콘")
                 Container(
-                  width: 140,
-                  height: 140,
+                  width: 120,
+                  height: 120,
                   decoration: BoxDecoration(
                     color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(16),
                   ),
                   alignment: Alignment.center,
-                  child: const Text('아이콘',
-                      style: TextStyle(fontSize: 28, color: AppColors.textSecondary)),
+                  child: const Text('R',
+                      style: TextStyle(
+                          fontSize: 48,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.accent)),
                 ),
                 const SizedBox(height: 28),
                 const Text('당신의 발표를 더 완벽하게',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
                 const Text('Rehearsal.io',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700)),
+                    style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.accent)),
                 const SizedBox(height: 32),
                 TextField(
-                  controller: _idController,
-                  decoration: const InputDecoration(hintText: 'ID'),
+                  controller: _usernameController,
+                  decoration: const InputDecoration(hintText: '아이디'),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _pwController,
                   obscureText: true,
-                  decoration: const InputDecoration(hintText: 'PW'),
+                  decoration: const InputDecoration(hintText: '비밀번호'),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  height: 56,
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                    ),
+                    onPressed: loading ? null : _login,
+                    child: Text(loading ? '로그인 중…' : '로그인',
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                  ),
+                ),
+                const SizedBox(height: 14),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Text('아직 회원이 아니신가요? ',
-                        style: TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-                    GestureDetector(
-                      onTap: () {
-                        // TODO: 회원가입 플로우 (실제 인증 붙일 때 구현)
-                      },
-                      child: const Text('회원가입하기',
-                          style: TextStyle(
-                            fontSize: 13,
-                            decoration: TextDecoration.underline,
-                          )),
-                    ),
+                    _link('아이디·비밀번호 찾기', () => context.push('/account-recovery')),
+                    const Text('  |  ',
+                        style: TextStyle(color: AppColors.textSecondary)),
+                    _link('회원가입', () => context.push('/signup')),
                   ],
                 ),
                 const SizedBox(height: 24),
-                _PrimaryLoginButton(
-                  label: loading ? '로그인 중…' : '로그인',
-                  onTap: loading ? null : () => _login(),
-                ),
-                const SizedBox(height: 20),
                 _SocialButton(
-                  label: '카카오로 로그인',
-                  onTap: loading ? null : () => _login(provider: 'kakao'),
-                ),
-                const SizedBox(height: 12),
+                    label: '구글로 로그인',
+                    onTap: loading ? null : _loginGoogle),
+                const SizedBox(height: 10),
                 _SocialButton(
-                  label: '네이버로 로그인',
-                  onTap: loading ? null : () => _login(provider: 'naver'),
-                ),
-                const SizedBox(height: 12),
+                    label: '카카오로 로그인 (자리만)',
+                    onTap: () => _notSupported('카카오')),
+                const SizedBox(height: 10),
                 _SocialButton(
-                  label: '구글로 로그인',
-                  onTap: loading ? null : () => _login(provider: 'google'),
-                ),
+                    label: '네이버로 로그인 (자리만)',
+                    onTap: () => _notSupported('네이버')),
                 const SizedBox(height: 32),
               ],
             ),
@@ -121,29 +137,16 @@ class _LoginPageState extends State<LoginPage> {
       ),
     );
   }
-}
 
-class _PrimaryLoginButton extends StatelessWidget {
-  const _PrimaryLoginButton({required this.label, this.onTap});
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: 52,
-      child: FilledButton(
-        style: FilledButton.styleFrom(
-          backgroundColor: AppColors.primary,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-        onPressed: onTap,
-        child: Text(label),
-      ),
-    );
-  }
+  Widget _link(String text, VoidCallback onTap) => GestureDetector(
+        onTap: onTap,
+        child: Text(text,
+            style: const TextStyle(
+              fontSize: 13,
+              color: AppColors.textSecondary,
+              decoration: TextDecoration.underline,
+            )),
+      );
 }
 
 class _SocialButton extends StatelessWidget {
@@ -155,16 +158,15 @@ class _SocialButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       width: double.infinity,
-      height: 52,
+      height: 50,
       child: TextButton(
         style: TextButton.styleFrom(
           backgroundColor: AppColors.surface,
           foregroundColor: AppColors.textPrimary,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
         onPressed: onTap,
-        child: Text(label),
+        child: Text(label, style: const TextStyle(fontSize: 14)),
       ),
     );
   }

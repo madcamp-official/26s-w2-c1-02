@@ -24,6 +24,7 @@ class AppTheme {
         centerTitle: false,
       ),
       textTheme: base.textTheme.apply(
+        fontFamily: 'NanumSquareRound',
         bodyColor: AppColors.textPrimary,
         displayColor: AppColors.textPrimary,
       ),
