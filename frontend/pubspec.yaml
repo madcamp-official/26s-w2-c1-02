@@ -21,6 +21,7 @@ dependencies:
 
   # File picking (PDF upload) — supports web/android/ios
   file_picker: ^8.1.6
+  record: ^6.2.1
 
 dev_dependencies:
   flutter_test:

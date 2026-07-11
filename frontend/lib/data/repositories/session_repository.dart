@@ -1,3 +1,4 @@
+import '../../core/audio/pcm_chunker.dart';
 import '../../core/network/api_client.dart';
 import '../models/material_info.dart';
 import '../models/qna.dart';
@@ -61,6 +62,7 @@ class SessionRepository {
   Future<void> startRecording(String sessionId) =>
       _api.post('/sessions/$sessionId/recording/start');
 
+  /// 단발 녹음 업로드 — 파일 모드(d3)·스트리밍 미지원 폴백 전용 (spec §4.3).
   Future<void> uploadRecording(
     String sessionId, {
     required String fileName,
@@ -73,6 +75,38 @@ class SessionRepository {
           fileName: fileName,
           bytes: bytes,
           fields: {
+            'started_at': startedAt.toUtc().toIso8601String(),
+            'ended_at': endedAt.toUtc().toIso8601String(),
+            'duration_seconds': '$durationSeconds',
+          });
+
+  /// 실시간 녹음 청크 업로드 (spec §4.3.1 v0.4-draft) — 60초+4초 겹침.
+  Future<void> uploadRecordingChunk(String sessionId, PcmChunk chunk) =>
+      _api.upload('/sessions/$sessionId/recording/chunks',
+          fileName: 'chunk_${chunk.seq}.wav',
+          bytes: chunk.wavBytes,
+          fields: {
+            'seq': '${chunk.seq}',
+            'offset_seconds': '${chunk.offsetSeconds}',
+            'overlap_seconds': '${chunk.overlapSeconds}',
+            'duration_seconds': '${chunk.durationSeconds}',
+          });
+
+  /// 실시간 녹음 종료: 재생용 전체 파일 + 병합 트리거 (spec §4.3.1 v0.4-draft).
+  Future<void> completeRecording(
+    String sessionId, {
+    required String fileName,
+    required List<int> bytes,
+    required int totalChunks,
+    required DateTime startedAt,
+    required DateTime endedAt,
+    required double durationSeconds,
+  }) =>
+      _api.upload('/sessions/$sessionId/recording/complete',
+          fileName: fileName,
+          bytes: bytes,
+          fields: {
+            'total_chunks': '$totalChunks',
             'started_at': startedAt.toUtc().toIso8601String(),
             'ended_at': endedAt.toUtc().toIso8601String(),
             'duration_seconds': '$durationSeconds',

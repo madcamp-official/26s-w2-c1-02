@@ -1,10 +1,10 @@
-import 'dart:convert';
-
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/files/file_constraints.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/models/enums.dart';
 import '../../data/models/session.dart';
@@ -15,8 +15,8 @@ import '../common/app_back_button.dart';
 import '../common/responsive_page.dart';
 
 /// 발표 만들기 (와이어프레임 d1) — spec §4.1 세션 생성.
-/// 페르소나 다중 선택(5종) · 질문 수 · 제한시간 · 진행 방식.
-/// PDF 실파일 선택은 Step 2 — 지금은 샘플 자료 업로드로 파이프라인 검증.
+/// 페르소나 다중 선택(5종) · 질문 수 · 제한시간 · 진행 방식 ·
+/// 실제 PDF 업로드(20MB/50p 클라이언트 검증, spec §1.3).
 class CreateSessionPage extends StatefulWidget {
   const CreateSessionPage({super.key, required this.teamId});
   final String teamId;
@@ -32,8 +32,29 @@ class _CreateSessionPageState extends State<CreateSessionPage> {
 
   final Set<QuestionerPersona> _personas = {QuestionerPersona.egen};
   SessionMode _mode = SessionMode.realtime;
-  bool _attachSamplePdf = false;
+  PlatformFile? _pdf; // 선택된 발표 자료 (bytes 포함)
   bool _submitting = false;
+
+  Future<void> _pickPdf() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+      withData: true, // 웹 호환: bytes로 받기
+    );
+    final file = result?.files.single;
+    if (file == null || file.bytes == null) return;
+
+    final error = FileConstraints.validatePdf(
+      fileName: file.name,
+      sizeBytes: file.size,
+      bytes: file.bytes,
+    );
+    if (error != null) {
+      _snack(error);
+      return;
+    }
+    setState(() => _pdf = file);
+  }
 
   @override
   void dispose() {
@@ -65,12 +86,13 @@ class _CreateSessionPageState extends State<CreateSessionPage> {
             ),
           );
 
-      if (_attachSamplePdf && mounted) {
-        // Step 2 전 임시: 샘플 PDF 바이트 업로드 → 전처리 폴링 화면으로.
+      final pdf = _pdf;
+      if (pdf != null && mounted) {
+        // PDF 업로드(202) → 전처리 상태 폴링 화면으로.
         await context.read<SessionRepository>().uploadMaterial(
               session.id,
-              fileName: 'sample_deck.pdf',
-              bytes: utf8.encode('%PDF-mock'),
+              fileName: pdf.name,
+              bytes: pdf.bytes!,
             );
         if (!mounted) return;
         context.pushReplacement('/sessions/${session.id}/material');
@@ -129,31 +151,43 @@ class _CreateSessionPageState extends State<CreateSessionPage> {
               const SizedBox(height: 8),
               InkWell(
                 borderRadius: BorderRadius.circular(16),
-                onTap: () =>
-                    setState(() => _attachSamplePdf = !_attachSamplePdf),
+                onTap: _pickPdf,
                 child: Container(
                   height: 92,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
-                        color: _attachSamplePdf
-                            ? AppColors.accent
-                            : AppColors.hint,
+                        color: _pdf != null ? AppColors.accent : AppColors.hint,
                         width: 1.4),
-                    color: _attachSamplePdf
+                    color: _pdf != null
                         ? AppColors.accent.withValues(alpha: 0.08)
                         : null,
                   ),
                   child: Center(
-                    child: Text(
-                      _attachSamplePdf
-                          ? '✓ 샘플 자료 첨부됨 (실파일 선택은 Step 2)'
-                          : '+ 샘플 자료 첨부 (탭해서 토글)',
-                      style: TextStyle(
-                          color: _attachSamplePdf
-                              ? AppColors.accent
-                              : AppColors.hint),
-                    ),
+                    child: _pdf == null
+                        ? const Text('+ PDF를 업로드해주세요',
+                            style: TextStyle(color: AppColors.hint))
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.picture_as_pdf,
+                                  size: 20, color: AppColors.accent),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  '${_pdf!.name} · ${(_pdf!.size / (1024 * 1024)).toStringAsFixed(1)}MB',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: AppColors.accent,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                onPressed: () => setState(() => _pdf = null),
+                              ),
+                            ],
+                          ),
                   ),
                 ),
               ),
