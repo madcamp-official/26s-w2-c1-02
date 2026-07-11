@@ -24,6 +24,7 @@ class AppTheme {
         centerTitle: false,
       ),
       textTheme: base.textTheme.apply(
+        fontFamily: 'Pretendard',
         bodyColor: AppColors.textPrimary,
         displayColor: AppColors.textPrimary,
       ),
