@@ -68,7 +68,10 @@
 
 ### 팀원3 (AI Pipeline)
 
-- [ ] PDF → `slides.json` 파서 (PyMuPDF, 페이지별 텍스트) — 팀원2의 잡에서 호출할 함수로
+- [x] PDF → `slides.json` 파서 (PyMuPDF, 페이지별 텍스트) — 팀원2의 잡에서 호출할 함수로
+  - `backend/app/services/material.py` `parse_pdf_to_slides(bytes|경로) → [{"page":1,"text":"..."}]`
+  - 스캔본·암호화·50p 초과 → `UnprocessablePdfError`(→ `UNPROCESSABLE_PDF`), 손상 파일 → `PdfParseError`(→ retry)
+  - 동기 함수 — 잡에서 `run_in_executor`로 감쌀 것. `PyMuPDF>=1.25.0` requirements 추가됨
 - [ ] STT 클라이언트: **5분 청크 분할 + 타임스탬프 오프셋 합산 병합** (ForcedAligner 제약 — 이 스텝 최난도)
 - [ ] `transcripts.segments` JSONB 형식(초 단위 float)으로 저장되는지 팀원2와 함께 검증
 

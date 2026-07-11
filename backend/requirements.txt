@@ -5,3 +5,4 @@ pydantic-settings>=2.7.0
 python-multipart>=0.0.20
 sqlalchemy>=2.0.36
 psycopg[binary]>=3.2
+PyMuPDF>=1.25.0
