@@ -7,6 +7,8 @@ cd "$(dirname "$0")"
 export PATH="$HOME/.local/bin:$PATH"
 source .venv-tts/bin/activate
 
+export CUDA_HOME="$(python -c 'import nvidia.cu13; print(nvidia.cu13.__path__[0])')"
+export PATH="$CUDA_HOME/bin:$PATH"
 export CUDA_VISIBLE_DEVICES=0
 
 vllm serve openbmb/VoxCPM2 --omni \
