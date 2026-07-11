@@ -33,6 +33,9 @@ HOST = os.environ.get("STT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("STT_PORT", "8200"))
 # 24GB 기준 25% ≈ 6GB (Aligner는 vLLM 예산 밖에서 ~2GB 추가 사용)
 GPU_MEM_UTIL = float(os.environ.get("STT_GPU_MEM_UTIL", "0.25"))
+# ForcedAligner가 오디오 1건당 최대 5분까지만 지원하므로 65536(기본값)은 과도함.
+# KV 캐시 예산을 아끼기 위해 낮춰서 지정.
+MAX_MODEL_LEN = int(os.environ.get("STT_MAX_MODEL_LEN", "16384"))
 
 app = FastAPI(title="Rehearsal.io STT")
 model = None
@@ -99,6 +102,7 @@ if __name__ == "__main__":
     model = Qwen3ASRModel.LLM(
         model="Qwen/Qwen3-ASR-1.7B",
         gpu_memory_utilization=GPU_MEM_UTIL,
+        max_model_len=MAX_MODEL_LEN,
         max_inference_batch_size=8,
         max_new_tokens=4096,  # 긴 오디오 대비
         forced_aligner="Qwen/Qwen3-ForcedAligner-0.6B",
