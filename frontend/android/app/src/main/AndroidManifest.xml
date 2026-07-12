@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 발표/답변 녹음 (record 패키지) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <application
         android:label="rehearsal"
         android:name="${applicationName}"

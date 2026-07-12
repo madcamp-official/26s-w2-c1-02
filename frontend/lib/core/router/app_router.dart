@@ -14,6 +14,7 @@ import '../../features/session/processing_page.dart';
 import '../../features/session/qna_complete_page.dart';
 import '../../features/session/qna_confirm_page.dart';
 import '../../features/session/qna_page.dart';
+import '../../features/session/upload_recording_page.dart';
 import '../../features/team/create_team_page.dart';
 import '../../features/team/invite_accept_page.dart';
 import '../../features/team/team_detail_page.dart';
@@ -99,12 +100,8 @@ class AppRouter {
       ),
       GoRoute(
         path: '/sessions/:sessionId/upload-recording',
-        builder: (_, _) => const PlaceholderPage(
-          title: '녹음 파일 업로드',
-          wireframe: '04 발표 준비 (d3)',
-          plannedStep: 'Step 2 (Day 4)',
-          description: 'mode=upload 세션의 mp3/wav/m4a 업로드 경로',
-        ),
+        builder: (_, s) =>
+            UploadRecordingPage(sessionId: s.pathParameters['sessionId']!),
       ),
 
       // ---- 05 발표 진행 ----

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'core/audio/recorder_service.dart';
 import 'core/config/env.dart';
 import 'core/network/api_client.dart';
 import 'core/network/http_backend.dart';
@@ -63,12 +64,16 @@ class _RehearsalAppState extends State<RehearsalApp> {
         Provider.value(value: _api),
         Provider(create: (_) => SessionRepository(_api)),
         Provider(create: (_) => TeamRepository(_api)),
+        Provider<RecorderService>(
+          create: (_) => MicRecorderService(),
+          dispose: (_, r) => r.dispose(),
+        ),
         ChangeNotifierProvider.value(value: _auth),
         ChangeNotifierProvider.value(value: _teams),
         ChangeNotifierProvider.value(value: _sessions),
       ],
       child: MaterialApp.router(
-        title: 'Rehearsal.io',
+        title: '말꼬리',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
         routerConfig: _router.router,

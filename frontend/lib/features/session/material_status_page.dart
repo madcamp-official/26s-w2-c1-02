@@ -1,7 +1,9 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/files/file_constraints.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/models/enums.dart';
 import '../../data/models/material_info.dart';
@@ -43,10 +45,34 @@ class MaterialStatusPage extends StatelessWidget {
                   if (m == null)
                     const Center(child: CircularProgressIndicator())
                   else
-                    _StatusCard(info: m, onRetry: () {
-                      repo.retryMaterial(sessionId);
-                      retry();
-                    }),
+                    _StatusCard(
+                      info: m,
+                      // 스캔본 등 실패 → 새 PDF 재선택 후 재업로드 (spec §4.2)
+                      onRetry: () async {
+                        final picked = await FilePicker.platform.pickFiles(
+                          type: FileType.custom,
+                          allowedExtensions: ['pdf'],
+                          withData: true,
+                        );
+                        final file = picked?.files.single;
+                        if (file == null || file.bytes == null) return;
+                        final error = FileConstraints.validatePdf(
+                          fileName: file.name,
+                          sizeBytes: file.size,
+                          bytes: file.bytes,
+                        );
+                        if (error != null) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(error)));
+                          }
+                          return;
+                        }
+                        await repo.uploadMaterial(sessionId,
+                            fileName: file.name, bytes: file.bytes!);
+                        retry();
+                      },
+                    ),
                   if (snap.error != null) ...[
                     Text('오류: ${snap.error}',
                         style: const TextStyle(color: AppColors.danger)),
