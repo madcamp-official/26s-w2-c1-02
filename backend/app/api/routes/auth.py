@@ -8,6 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.core.config import settings
 from app.core.errors import ApiError
 from app.core.security import (
@@ -217,6 +218,19 @@ def refresh(
     # 새 토큰 전달 방식은 헤더가 아니라 '이 토큰이 발급됐던 기기'(claimed.platform)를 따른다.
     # 위 UPDATE(폐기)와 새 토큰 INSERT는 _issue_tokens의 commit에 한 트랜잭션으로 묶인다.
     return _issue_tokens(user, claimed.platform, db, response)
+
+
+@router.get("/me", response_model=AuthUser)
+def me(current_user: models.User = Depends(get_current_user)) -> AuthUser:
+    """현재 유저 조회 (api-spec §2, 자동 로그인 확인용).
+
+    access 만료 시 get_current_user가 401 TOKEN_EXPIRED를 내고,
+    FE는 그걸 신호로 /auth/refresh 후 재시도한다.
+    """
+    return AuthUser(
+        id=current_user.id, name=current_user.name,
+        username=current_user.username, email=current_user.email,
+    )
 
 
 @router.post("/logout", status_code=204)

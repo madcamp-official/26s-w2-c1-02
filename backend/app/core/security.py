@@ -109,4 +109,9 @@ def decode_access_token(token: str) -> str:
 
     if payload.get("type") != _ACCESS_TOKEN_TYPE:
         raise TokenInvalidError("access 토큰이 아님")
-    return payload["sub"]
+    # sub는 반드시 존재하고 문자열이어야 한다. 없거나(KeyError→500) 다른 타입이면
+    # 위조·손상된 토큰으로 간주해 거부한다 (user_id는 항상 문자열 PK).
+    sub = payload.get("sub")
+    if not isinstance(sub, str) or not sub:
+        raise TokenInvalidError("sub 클레임이 없거나 형식이 올바르지 않음")
+    return sub

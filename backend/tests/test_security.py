@@ -126,6 +126,34 @@ class TestAccessToken:
         with pytest.raises(TokenInvalidError):
             decode_access_token(garbage)
 
+    @pytest.mark.parametrize("bad_sub", [None, 12345, "", {"nested": "x"}])
+    def test_missing_or_nonstring_sub_rejected_not_crash(self, bad_sub):
+        """sub가 없거나 문자열이 아니면 KeyError(→500)가 아니라 TokenInvalidError여야 한다.
+        (재검증에서 발견: sub 없는 유효 서명 토큰이 500을 유발했음)"""
+        payload = {
+            "type": "access",
+            "iat": datetime.now(timezone.utc),
+            "exp": datetime.now(timezone.utc) + timedelta(seconds=900),
+        }
+        if bad_sub is not None:
+            payload["sub"] = bad_sub
+        token = pyjwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+        with pytest.raises(TokenInvalidError):
+            decode_access_token(token)
+
+    def test_alg_none_token_rejected(self):
+        """alg=none(서명 없는) 토큰은 반드시 거부해야 한다 (JWT 고전 취약점)."""
+        import base64
+        import json
+
+        header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=")
+        body = base64.urlsafe_b64encode(
+            json.dumps({"sub": "usr_x", "type": "access"}).encode()
+        ).rstrip(b"=")
+        forged = f"{header.decode()}.{body.decode()}."
+        with pytest.raises(TokenInvalidError):
+            decode_access_token(forged)
+
     def test_refresh_type_token_rejected_as_access(self):
         """type이 access가 아니면(예: 나중에 만들 refresh 토큰) 거부해야 한다."""
         payload = {
