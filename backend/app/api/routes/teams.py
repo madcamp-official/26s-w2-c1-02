@@ -8,6 +8,7 @@
 - DELETE /teams/{id}  : 팀장 (세션·멤버십·초대 전부 CASCADE — db-schema §7.3)
 - GET /teams/{id}/members            : 멤버 (팀원 목록)
 - DELETE /teams/{id}/members/{userId}: 팀장 (팀원 내보내기, 팀장 자신 제외)
+- POST /teams/{id}/leave             : 멤버 (팀 나가기 + 팀장 자동 승계, §7.2)
 """
 
 from fastapi import APIRouter, Depends
@@ -103,6 +104,44 @@ def delete_team(
     # 세션·자료·녹음·전사·Q&A·리포트·멤버십·초대까지 DB CASCADE (db-schema §7.3)
     # 오브젝트 스토리지 파일 삭제는 작업 5에서 추가 예정
     db.delete(team)
+    db.commit()
+
+
+# ── 팀 나가기 + 팀장 자동 승계 (작업 4-4, db-schema §7.2 · D5) ──────────
+
+@router.post("/{team_id}/leave", status_code=204)
+def leave_team(
+    team: models.Team = Depends(require_team_member),
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """팀 나가기(멤버 누구나). 단일 트랜잭션 — DEFERRABLE FK가 커밋 시점에
+    '팀장 ∈ 멤버'를 강제하므로 UPDATE/DELETE 순서는 자유롭다 (db-schema §7.2).
+
+    - 비팀장         : 내 멤버십만 삭제
+    - 팀장 + 후임 있음: 최고참(joined_at→user_id) 승계 후 내 멤버십 삭제
+    - 팀장 + 마지막 1인: 팀 삭제 (세션·멤버십·초대 CASCADE)
+    """
+    membership = db.get(models.TeamMember, (team.id, user.id))  # 멤버임은 가드가 보장
+
+    if team.leader_id != user.id:
+        db.delete(membership)
+        db.commit()
+        return
+
+    # 팀장 이탈 → 본인 제외 최고참을 후임으로 (db-schema §7.2 쿼리 그대로)
+    successor_id = db.scalar(
+        select(models.TeamMember.user_id)
+        .where(models.TeamMember.team_id == team.id,
+               models.TeamMember.user_id != user.id)
+        .order_by(models.TeamMember.joined_at, models.TeamMember.user_id)
+        .limit(1)
+    )
+    if successor_id is None:
+        db.delete(team)          # 마지막 1인 → 팀 통째로 CASCADE
+    else:
+        team.leader_id = successor_id
+        db.delete(membership)    # 커밋 시 후임이 멤버로 남아 있어 FK 통과
     db.commit()
 
 

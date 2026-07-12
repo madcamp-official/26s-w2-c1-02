@@ -9,6 +9,8 @@
 team CASCADE로 함께 사라진다 (팀 먼저 정리).
 """
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
@@ -43,13 +45,10 @@ def _auth(username: str) -> dict:
     return {"Authorization": f"Bearer {_token(username)}"}
 
 
-@pytest.fixture()
-def two_users():
-    a = _make_user("tmtest_a", "리더A")
-    b = _make_user("tmtest_b", "타인B")
-    yield {"a": a, "b": b}
+def _purge_tmtest() -> None:
+    """tmtest_* 유저와 그들이 리더인 팀 정리. 팀을 먼저 지워야 users RESTRICT에 안 걸림.
+    (팀장이 이미 tmtest면 그 팀도 잡히고, 세션은 팀 CASCADE로 함께 사라진다.)"""
     with SessionLocal() as db:
-        # 팀(리더가 tmtest_*)을 먼저 지워야 users RESTRICT에 안 걸림
         team_ids = db.scalars(select(Team.id).join(
             User, User.id == Team.leader_id).where(User.username.ilike("tmtest%"))).all()
         for tid in team_ids:
@@ -57,6 +56,23 @@ def two_users():
         db.commit()
         db.execute(delete(User).where(User.username.ilike("tmtest%")))
         db.commit()
+
+
+@pytest.fixture()
+def two_users():
+    a = _make_user("tmtest_a", "리더A")
+    b = _make_user("tmtest_b", "타인B")
+    yield {"a": a, "b": b}
+    _purge_tmtest()
+
+
+@pytest.fixture()
+def three_users():
+    a = _make_user("tmtest_a", "리더A")
+    b = _make_user("tmtest_b", "멤버B")
+    c = _make_user("tmtest_c", "멤버C")
+    yield {"a": a, "b": b, "c": c}
+    _purge_tmtest()
 
 
 class TestCreateTeam:
@@ -205,6 +221,20 @@ def _add_session(team_id: str, owner_id: str, name: str = "리허설") -> str:
 def _add_member(team_id: str, user_id: str) -> None:
     with SessionLocal() as db:
         db.add(TeamMember(team_id=team_id, user_id=user_id))
+        db.commit()
+
+
+def _add_member_at(team_id: str, user_id: str, joined_at: datetime) -> None:
+    """승계 순서(joined_at, user_id) 테스트를 위해 가입 시각을 명시 삽입."""
+    with SessionLocal() as db:
+        db.add(TeamMember(team_id=team_id, user_id=user_id, joined_at=joined_at))
+        db.commit()
+
+
+def _set_joined_at(team_id: str, user_id: str, when: datetime) -> None:
+    """기존 멤버(예: 생성자=팀장)의 가입 시각을 조정 — 팀장이 최고참인 실제 상황 재현."""
+    with SessionLocal() as db:
+        db.get(TeamMember, (team_id, user_id)).joined_at = when
         db.commit()
 
 
@@ -488,3 +518,154 @@ class TestRemoveMember:
         assert client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['b']}", headers=h).status_code == 204
         r2 = client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['b']}", headers=h)
         assert r2.status_code == 404 and r2.json()["error"]["code"] == "MEMBER_NOT_FOUND"
+
+
+# ── 작업 4-4: 팀 나가기 + 팀장 자동 승계 (db-schema §7.2) ────────────────
+
+def _leave(team_id: str, username: str):
+    return client.post(f"{TEAMS_URL}/{team_id}/leave", headers=_auth(username))
+
+
+class TestLeaveNonLeader:
+    """비팀장이 나가면 멤버십만 삭제되고 팀·팀장은 그대로."""
+
+    def test_member_leaves_membership_only(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "탈퇴팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member(tid, two_users["b"])
+        assert _leave(tid, "tmtest_b").status_code == 204
+        with SessionLocal() as db:
+            assert db.get(TeamMember, (tid, two_users["b"])) is None   # 나감
+            assert db.get(TeamMember, (tid, two_users["a"])) is not None
+            assert db.get(Team, tid).leader_id == two_users["a"]       # 팀장 불변
+
+    def test_left_member_loses_access(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "탈퇴팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member(tid, two_users["b"])
+        _leave(tid, "tmtest_b")
+        assert tid not in {t["id"] for t in client.get(TEAMS_URL, headers=_auth("tmtest_b")).json()}
+        assert client.get(f"{TEAMS_URL}/{tid}", headers=_auth("tmtest_b")).status_code == 404
+
+    def test_outsider_404(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        res = _leave(tid, "tmtest_b")  # B는 멤버가 아님
+        assert res.status_code == 404
+        assert res.json()["error"]["code"] == "TEAM_NOT_FOUND"
+
+    def test_requires_auth(self):
+        assert client.post(f"{TEAMS_URL}/team_x/leave").status_code == 401
+
+    def test_double_leave_second_404(self, two_users):
+        """한 번 나간 뒤 또 나가려 하면 이미 비멤버라 404 (멤버 가드가 차단)."""
+        tid = client.post(TEAMS_URL, json={"name": "팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member(tid, two_users["b"])
+        assert _leave(tid, "tmtest_b").status_code == 204
+        res = _leave(tid, "tmtest_b")
+        assert res.status_code == 404
+        assert res.json()["error"]["code"] == "TEAM_NOT_FOUND"
+
+
+class TestLeaderSuccession:
+    """팀장이 나가면 최고참(joined_at→user_id)이 자동 승계 (D5·§7.2)."""
+
+    def test_transfers_to_earliest_joiner(self, three_users):
+        tid = client.post(TEAMS_URL, json={"name": "승계팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        # B가 C보다 먼저 합류 → B가 후임이어야 함
+        _add_member_at(tid, three_users["b"], datetime(2026, 1, 1, tzinfo=timezone.utc))
+        _add_member_at(tid, three_users["c"], datetime(2026, 2, 1, tzinfo=timezone.utc))
+
+        assert _leave(tid, "tmtest_a").status_code == 204
+        with SessionLocal() as db:
+            team = db.get(Team, tid)
+            assert team is not None
+            assert team.leader_id == three_users["b"]                 # B 승계
+            assert db.get(TeamMember, (tid, three_users["a"])) is None  # A는 나감
+            assert db.get(TeamMember, (tid, team.leader_id)) is not None  # 팀장 ∈ 멤버(FK)
+
+    def test_tiebreak_by_user_id_when_same_joined_at(self, three_users):
+        tid = client.post(TEAMS_URL, json={"name": "동률팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        same = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        _add_member_at(tid, three_users["b"], same)
+        _add_member_at(tid, three_users["c"], same)
+        expected = min(three_users["b"], three_users["c"])  # user_id 사전순 최소
+
+        assert _leave(tid, "tmtest_a").status_code == 204
+        with SessionLocal() as db:
+            assert db.get(Team, tid).leader_id == expected
+
+    def test_new_leader_gains_leader_powers(self, three_users):
+        """승계 후 새 팀장이 실제로 팀장 권한(이름 변경)을 갖는지."""
+        tid = client.post(TEAMS_URL, json={"name": "권한이전"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member_at(tid, three_users["b"], datetime(2026, 1, 1, tzinfo=timezone.utc))
+        _leave(tid, "tmtest_a")
+        # 이제 B가 팀장 → PATCH 성공해야 함
+        res = client.patch(f"{TEAMS_URL}/{tid}", json={"name": "B가바꿈"},
+                           headers=_auth("tmtest_b"))
+        assert res.status_code == 200 and res.json()["name"] == "B가바꿈"
+        assert res.json()["leader_id"] == three_users["b"]
+
+    def test_successor_excludes_self_even_when_leader_is_earliest(self, three_users):
+        """실사용 조건: 팀장(=생성자)이 항상 최고참이다. 승계 쿼리의 user_id<>나
+        필터가 없으면 팀장이 자기 자신을 후임으로 뽑아 FK가 터진다 —
+        팀장을 확실히 제외하고 '비팀장 중 최고참'을 뽑는지 검증."""
+        tid = client.post(TEAMS_URL, json={"name": "팀장최고참"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        # A(팀장)를 전체에서 가장 이른 가입자로 만든다
+        _set_joined_at(tid, three_users["a"], datetime(2025, 1, 1, tzinfo=timezone.utc))
+        _add_member_at(tid, three_users["b"], datetime(2026, 1, 1, tzinfo=timezone.utc))
+        _add_member_at(tid, three_users["c"], datetime(2026, 2, 1, tzinfo=timezone.utc))
+
+        assert _leave(tid, "tmtest_a").status_code == 204
+        with SessionLocal() as db:
+            # A가 전체 최고참이지만 후임은 비팀장 중 최고참 B (A 자신은 제외)
+            assert db.get(Team, tid).leader_id == three_users["b"]
+
+    def test_leader_with_sessions_succession_preserves_sessions(self, three_users):
+        """숨은 뒷탈: 세션을 소유한 팀장이 승계로 나가도 owner_id RESTRICT가 안 걸리고
+        세션은 보존된다 (멤버십 행만 삭제 + leader_id UPDATE)."""
+        tid = client.post(TEAMS_URL, json={"name": "세션보유팀장"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member_at(tid, three_users["b"], datetime(2026, 1, 1, tzinfo=timezone.utc))
+        sid = _add_session(tid, three_users["a"], "팀장 발표")  # A가 owner인 세션
+
+        assert _leave(tid, "tmtest_a").status_code == 204  # RESTRICT(500) 없이 정상
+        with SessionLocal() as db:
+            assert db.get(Team, tid).leader_id == three_users["b"]        # 승계됨
+            assert db.get(TeamMember, (tid, three_users["a"])) is None    # A 멤버십 삭제
+            assert db.get(RehearsalSession, sid) is not None              # 세션 보존
+            assert db.get(RehearsalSession, sid).owner_id == three_users["a"]
+
+
+class TestLastMemberLeave:
+    """마지막 1인(팀장 혼자)이 나가면 팀 자체가 삭제되고 하위 리소스 CASCADE."""
+
+    def test_solo_leader_leave_deletes_team(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "혼자팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        assert _leave(tid, "tmtest_a").status_code == 204
+        with SessionLocal() as db:
+            assert db.get(Team, tid) is None
+            assert db.get(TeamMember, (tid, two_users["a"])) is None
+
+    def test_cascades_sessions(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "세션팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        sid = _add_session(tid, two_users["a"])
+        assert _leave(tid, "tmtest_a").status_code == 204
+        with SessionLocal() as db:
+            assert db.get(Team, tid) is None
+            assert db.get(RehearsalSession, sid) is None  # 팀 삭제 → 세션 CASCADE
+
+    def test_leaver_user_survives(self, two_users):
+        """팀은 사라져도 나간 유저 계정 자체는 남는다 (팀 나가기 ≠ 회원 탈퇴)."""
+        tid = client.post(TEAMS_URL, json={"name": "혼자팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _leave(tid, "tmtest_a")
+        with SessionLocal() as db:
+            assert db.get(User, two_users["a"]) is not None
