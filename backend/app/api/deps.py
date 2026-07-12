@@ -50,3 +50,23 @@ def get_current_user(
     if user is None or user.deleted_at is not None:  # 토큰 유효기간 내 탈퇴한 경우 차단
         raise ApiError(401, "UNAUTHORIZED", "유효하지 않은 인증이에요.")
     return user
+
+
+def load_team_as_member(team_id: str, user: models.User, db: Session) -> models.Team:
+    """팀을 로드하되, 요청자가 그 팀 멤버가 아니면 404 (존재 자체를 숨김).
+
+    비멤버에게 403을 주면 '이 팀이 존재한다'는 정보가 새므로 404로 통일한다.
+    라우터에서 재사용하는 공통 권한 부품 (세션 라우터도 사용 예정)."""
+    team = db.get(models.Team, team_id)
+    if team is None:
+        raise ApiError(404, "TEAM_NOT_FOUND", "팀을 찾을 수 없어요.")
+    is_member = db.get(models.TeamMember, (team_id, user.id)) is not None
+    if not is_member:
+        raise ApiError(404, "TEAM_NOT_FOUND", "팀을 찾을 수 없어요.")
+    return team
+
+
+def require_team_leader(team: models.Team, user: models.User) -> None:
+    """팀장 전용 작업 가드. 멤버지만 팀장이 아니면 403 (존재는 이미 드러난 상태)."""
+    if team.leader_id != user.id:
+        raise ApiError(403, "FORBIDDEN_NOT_LEADER", "팀장만 할 수 있는 작업이에요.")
