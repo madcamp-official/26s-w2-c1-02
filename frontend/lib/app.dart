@@ -73,7 +73,7 @@ class _RehearsalAppState extends State<RehearsalApp> {
         ChangeNotifierProvider.value(value: _sessions),
       ],
       child: MaterialApp.router(
-        title: 'Rehearsal.io',
+        title: '말꼬리',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
         routerConfig: _router.router,

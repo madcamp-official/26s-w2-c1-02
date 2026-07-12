@@ -59,24 +59,16 @@ class _LoginPageState extends State<LoginPage> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const SizedBox(height: 48),
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  alignment: Alignment.center,
-                  child: const Text('R',
-                      style: TextStyle(
-                          fontSize: 48,
-                          fontWeight: FontWeight.w800,
-                          color: AppColors.accent)),
+                Image.asset(
+                  'assets/icons/malggori-character.png',
+                  width: 140,
+                  height: 140,
+                  fit: BoxFit.contain,
                 ),
                 const SizedBox(height: 28),
                 const Text('당신의 발표를 더 완벽하게',
                     style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-                const Text('Rehearsal.io',
+                const Text('말꼬리',
                     style: TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.w800,
