@@ -219,6 +219,45 @@ def refresh(
     return _issue_tokens(user, claimed.platform, db, response)
 
 
+@router.post("/logout", status_code=204)
+def logout(
+    response: Response,
+    body: RefreshRequest | None = None,
+    refresh_cookie: str | None = Cookie(default=None, alias="refresh_token"),
+    db: Session = Depends(get_db),
+    x_client_platform: str | None = Header(default=None),
+) -> None:
+    """로그아웃 (api-spec §2): 제시된 refresh 폐기 + Web은 쿠키 삭제.
+
+    멱등(idempotent): 이미 폐기됐거나 가짜 토큰이어도 204 — 로그아웃 버튼은
+    항상 성공해야 하고, 폐기 여부를 응답으로 구분해주면 토큰 유효성 탐색에 악용된다.
+    이 기기의 세션만 끊는다 — 다른 기기(다른 refresh 행)는 영향 없음.
+    """
+    platform = _parse_platform(x_client_platform)
+    raw = refresh_cookie if platform is ClientPlatform.web else (body.refresh_token if body else None)
+    if not raw:  # 관용: 반대쪽 출처 폴백 (refresh와 동일 규칙)
+        raw = (body.refresh_token if body else None) or refresh_cookie
+    if not raw:
+        raise ApiError(401, "UNAUTHORIZED", "로그아웃할 세션 정보(refresh 토큰)가 없어요.")
+
+    db.execute(
+        update(models.RefreshToken)
+        .where(
+            models.RefreshToken.token_hash == hash_refresh_token(raw),
+            models.RefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(timezone.utc))
+    )
+    db.commit()
+
+    if refresh_cookie is not None or platform is ClientPlatform.web:
+        # 쿠키 삭제는 설정 때와 같은 path/속성이어야 브라우저가 지운다
+        response.delete_cookie(
+            key=_REFRESH_COOKIE, path=_REFRESH_COOKIE_PATH,
+            secure=True, httponly=True, samesite="strict",
+        )
+
+
 # 소셜 로그인은 아직 Mock (spec 경로는 /auth/login/social/{provider} — 실구현 시 교체)
 @router.post("/login/{provider}", response_model=LoginResponse)
 async def login_with_provider(provider: str) -> LoginResponse:
