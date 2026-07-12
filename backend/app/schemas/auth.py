@@ -38,8 +38,33 @@ class SignupResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    id: str | None = None
-    password: str | None = None
+    """POST /auth/login 요청 (api-spec §2)."""
+
+    username: str = Field(min_length=1, max_length=30)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class AuthUser(BaseModel):
+    """로그인 응답의 user — spec §2 예시와 필드 단위 일치 (id·name·username·email만)."""
+
+    id: str
+    name: str
+    username: str
+    email: str | None
+
+
+class TokenResponse(BaseModel):
+    """로그인/refresh 응답 (spec §2).
+
+    Web(쿠키 방식)은 refresh_token=None으로 두면 응답에서 필드 자체가 빠진다
+    (라우터에서 response_model_exclude_none=True 사용).
+    """
+
+    access_token: str
+    refresh_token: str | None = None  # Native 전용. Web은 Set-Cookie로만 전달
+    token_type: str = "Bearer"
+    expires_in: int
+    user: AuthUser
 
 
 class User(BaseModel):

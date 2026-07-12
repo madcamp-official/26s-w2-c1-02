@@ -5,6 +5,8 @@ api-spec.md §2 계약:
 - refresh 토큰은 여기서 다루지 않는다 (원문은 클라이언트에게만, DB엔 해시만 — 작업 3-3에서 별도 구현)
 """
 
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -77,6 +79,20 @@ def create_access_token(user_id: str) -> tuple[str, int]:
     }
     token = jwt.encode(payload, settings.jwt_secret, algorithm=_JWT_ALGORITHM)
     return token, expires_in
+
+
+# ============================================================
+# refresh 토큰 (JWT 아님 — 불투명 랜덤값 + DB 해시 대조, db-schema refresh_tokens)
+# ============================================================
+
+def generate_refresh_token() -> str:
+    """refresh 토큰 원문을 생성한다. 원문은 클라이언트에게만 주고 DB엔 해시만 저장."""
+    return secrets.token_urlsafe(48)  # 64자 URL-safe 랜덤
+
+
+def hash_refresh_token(token: str) -> str:
+    """refresh_tokens.token_hash에 저장/대조할 SHA-256 해시(hex 64자)."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def decode_access_token(token: str) -> str:

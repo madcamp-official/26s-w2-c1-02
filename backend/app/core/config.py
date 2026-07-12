@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     jwt_secret: str = "INSECURE-DEV-ONLY-CHANGE-ME-IN-ENV"
     # access 토큰 수명(초). api-spec §2 응답의 expires_in과 일치해야 함.
     jwt_access_expires_seconds: int = 900
+    # refresh 토큰 수명(초). 기본 14일 — 자동 로그인 유지 기간.
+    refresh_expires_seconds: int = 14 * 24 * 3600
 
     # LLM 제공자 선택 (mock | gemini)
     llm_provider: str = "mock"
