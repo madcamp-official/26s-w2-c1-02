@@ -53,10 +53,11 @@ def get_current_user(
 
 
 def load_team_as_member(team_id: str, user: models.User, db: Session) -> models.Team:
-    """팀을 로드하되, 요청자가 그 팀 멤버가 아니면 404 (존재 자체를 숨김).
+    """(순수 헬퍼) 팀을 로드하되, 요청자가 그 팀 멤버가 아니면 404 (존재 자체를 숨김).
 
     비멤버에게 403을 주면 '이 팀이 존재한다'는 정보가 새므로 404로 통일한다.
-    라우터에서 재사용하는 공통 권한 부품 (세션 라우터도 사용 예정)."""
+    Depends가 아니라 일반 함수 — 트랜잭션 본문(4-4 팀 나가기/승계 등)에서 직접
+    호출한다. 라우터 진입 가드로는 아래 require_team_member(Depends)를 쓴다."""
     team = db.get(models.Team, team_id)
     if team is None:
         raise ApiError(404, "TEAM_NOT_FOUND", "팀을 찾을 수 없어요.")
@@ -66,7 +67,33 @@ def load_team_as_member(team_id: str, user: models.User, db: Session) -> models.
     return team
 
 
-def require_team_leader(team: models.Team, user: models.User) -> None:
-    """팀장 전용 작업 가드. 멤버지만 팀장이 아니면 403 (존재는 이미 드러난 상태)."""
+# ── 권한 검사 공통화의 씨앗 (작업 4-2) ────────────────────────────────
+# 라우터에 그대로 주입하는 두 가드. Step 2("권한 검사 공통화")가 이 패턴을
+# 세션 owner 검사(require_session_owner 등)로 확장한다.
+#   - require_team_member : 멤버가 아니면 404 (존재를 숨김)
+#   - require_team_leader  : 팀장이 아니면 403 FORBIDDEN_NOT_LEADER (§6.2)
+# 팀장 가드는 멤버 가드 위에 합성된다 → 팀장 검사에도 멤버 404 규칙이 먼저 적용됨.
+
+
+def require_team_member(
+    team_id: str,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> models.Team:
+    """멤버 가드 (Depends). 요청자가 팀 멤버면 Team을 주입하고, 아니면 404.
+
+    사용:  team: models.Team = Depends(require_team_member)
+    경로에 {team_id}가 있는 엔드포인트에서 team_id를 자동으로 받아온다."""
+    return load_team_as_member(team_id, user, db)
+
+
+def require_team_leader(
+    team: models.Team = Depends(require_team_member),
+    user: models.User = Depends(get_current_user),
+) -> models.Team:
+    """팀장 가드 (Depends). require_team_member 위에 팀장 검사를 얹는다.
+
+    멤버지만 팀장이 아니면 403 FORBIDDEN_NOT_LEADER (팀 존재는 이미 드러난 상태)."""
     if team.leader_id != user.id:
         raise ApiError(403, "FORBIDDEN_NOT_LEADER", "팀장만 할 수 있는 작업이에요.")
+    return team

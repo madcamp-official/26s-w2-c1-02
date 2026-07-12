@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, load_team_as_member, require_team_leader
+from app.api.deps import get_current_user, require_team_leader, require_team_member
 from app.db import models
 from app.db.session import get_db
 from app.schemas.team import (
@@ -69,49 +69,41 @@ def create_team(
     db.add(models.TeamMember(team_id=team.id, user_id=user.id))
     db.commit()
     db.refresh(team)
-    return _to_detail(team, user, db)
+    return _to_detail(team, db)
 
 
 @router.get("/{team_id}", response_model=TeamDetail)
 def get_team(
-    team_id: str,
-    user: models.User = Depends(get_current_user),
+    team: models.Team = Depends(require_team_member),
     db: Session = Depends(get_db),
 ) -> TeamDetail:
-    team = load_team_as_member(team_id, user, db)
-    return _to_detail(team, user, db)
+    return _to_detail(team, db)
 
 
 @router.patch("/{team_id}", response_model=TeamDetail)
 def update_team(
-    team_id: str,
     body: TeamUpdateRequest,
-    user: models.User = Depends(get_current_user),
+    team: models.Team = Depends(require_team_leader),
     db: Session = Depends(get_db),
 ) -> TeamDetail:
-    team = load_team_as_member(team_id, user, db)
-    require_team_leader(team, user)
     team.name = body.name
     db.commit()
     db.refresh(team)
-    return _to_detail(team, user, db)
+    return _to_detail(team, db)
 
 
 @router.delete("/{team_id}", status_code=204)
 def delete_team(
-    team_id: str,
-    user: models.User = Depends(get_current_user),
+    team: models.Team = Depends(require_team_leader),
     db: Session = Depends(get_db),
 ) -> None:
-    team = load_team_as_member(team_id, user, db)
-    require_team_leader(team, user)
     # 세션·자료·녹음·전사·Q&A·리포트·멤버십·초대까지 DB CASCADE (db-schema §7.3)
     # 오브젝트 스토리지 파일 삭제는 작업 5에서 추가 예정
     db.delete(team)
     db.commit()
 
 
-def _to_detail(team: models.Team, _user: models.User, db: Session) -> TeamDetail:
+def _to_detail(team: models.Team, db: Session) -> TeamDetail:
     """팀 상세 응답 구성 — 멤버 목록(가입순) + 발표 수."""
     member_rows = db.execute(
         select(models.User.id, models.User.name, models.User.username)
