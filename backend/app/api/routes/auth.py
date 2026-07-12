@@ -3,8 +3,8 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Header, Response
-from sqlalchemy import func, select
+from fastapi import APIRouter, Cookie, Depends, Header, Response
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,7 @@ from app.schemas.auth import (
     AuthUser,
     LoginRequest,
     LoginResponse,
+    RefreshRequest,
     SignupRequest,
     SignupResponse,
     TokenResponse,
@@ -168,6 +169,54 @@ def login(
         raise ApiError(401, "INVALID_CREDENTIALS", "아이디 또는 비밀번호가 올바르지 않아요.")
 
     return _issue_tokens(user, _parse_platform(x_client_platform), db, response)
+
+
+@router.post("/refresh", response_model=TokenResponse, response_model_exclude_none=True)
+def refresh(
+    response: Response,
+    body: RefreshRequest | None = None,
+    refresh_cookie: str | None = Cookie(default=None, alias="refresh_token"),
+    db: Session = Depends(get_db),
+    x_client_platform: str | None = Header(default=None),
+) -> TokenResponse:
+    """access 재발급 (api-spec §2, 자동 로그인).
+
+    refresh 원문 출처: Web = httpOnly 쿠키(자동 전송) / Native = 본문 {refresh_token}.
+    **회전(rotation)**: 쓴 토큰은 즉시 폐기하고 새 refresh를 발급한다 —
+    탈취된 토큰이 재사용되면 401이 나므로 피해가 1회로 제한된다.
+    실패는 전부 같은 401 → FE는 재로그인으로 보낸다.
+    """
+    platform = _parse_platform(x_client_platform)
+    raw = refresh_cookie if platform is ClientPlatform.web else (body.refresh_token if body else None)
+    if not raw:  # 관용: 반대쪽 출처에 있으면 그것이라도 사용
+        raw = (body.refresh_token if body else None) or refresh_cookie
+    if not raw:
+        raise ApiError(401, "UNAUTHORIZED", "refresh 토큰이 없어요. 다시 로그인해주세요.")
+
+    now = datetime.now(timezone.utc)
+    # 원자적 소비(claim): "유효하면 폐기하면서 가져오기"를 UPDATE 한 방으로.
+    # 같은 토큰으로 동시에 2요청이 와도 DB 행 잠금이 정확히 하나만 성공시킨다
+    # (재검증 실측: SELECT 후 폐기 방식은 10회 중 8회 이중 성공 — 회전 보장 깨짐).
+    claimed = db.execute(
+        update(models.RefreshToken)
+        .where(
+            models.RefreshToken.token_hash == hash_refresh_token(raw),
+            models.RefreshToken.revoked_at.is_(None),
+            models.RefreshToken.expires_at > now,
+        )
+        .values(revoked_at=now)
+        .returning(models.RefreshToken.user_id, models.RefreshToken.platform)
+    ).one_or_none()
+    if claimed is None:  # 없음 · 이미 폐기됨 · 만료 — 전부 같은 401
+        raise ApiError(401, "UNAUTHORIZED", "세션이 만료됐어요. 다시 로그인해주세요.")
+
+    user = db.get(models.User, claimed.user_id)
+    if user is None or user.deleted_at is not None:
+        raise ApiError(401, "UNAUTHORIZED", "세션이 만료됐어요. 다시 로그인해주세요.")
+
+    # 새 토큰 전달 방식은 헤더가 아니라 '이 토큰이 발급됐던 기기'(claimed.platform)를 따른다.
+    # 위 UPDATE(폐기)와 새 토큰 INSERT는 _issue_tokens의 commit에 한 트랜잭션으로 묶인다.
+    return _issue_tokens(user, claimed.platform, db, response)
 
 
 # 소셜 로그인은 아직 Mock (spec 경로는 /auth/login/social/{provider} — 실구현 시 교체)

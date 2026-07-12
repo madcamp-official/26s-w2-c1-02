@@ -44,6 +44,12 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class RefreshRequest(BaseModel):
+    """POST /auth/refresh 요청 본문 (Native 전용 — Web은 쿠키로 자동 전송, 본문 없음)."""
+
+    refresh_token: str | None = None
+
+
 class AuthUser(BaseModel):
     """로그인 응답의 user — spec §2 예시와 필드 단위 일치 (id·name·username·email만)."""
 
