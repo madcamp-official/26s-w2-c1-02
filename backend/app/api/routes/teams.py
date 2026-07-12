@@ -6,6 +6,8 @@
 - GET /teams/{id}     : 멤버
 - PATCH /teams/{id}   : 팀장
 - DELETE /teams/{id}  : 팀장 (세션·멤버십·초대 전부 CASCADE — db-schema §7.3)
+- GET /teams/{id}/members            : 멤버 (팀원 목록)
+- DELETE /teams/{id}/members/{userId}: 팀장 (팀원 내보내기, 팀장 자신 제외)
 """
 
 from fastapi import APIRouter, Depends
@@ -13,6 +15,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_team_leader, require_team_member
+from app.core.errors import ApiError
 from app.db import models
 from app.db.session import get_db
 from app.schemas.team import (
@@ -103,24 +106,58 @@ def delete_team(
     db.commit()
 
 
-def _to_detail(team: models.Team, db: Session) -> TeamDetail:
-    """팀 상세 응답 구성 — 멤버 목록(가입순) + 발표 수."""
-    member_rows = db.execute(
+# ── 멤버 (작업 4-3, api-spec §3) ──────────────────────────────────────
+
+@router.get("/{team_id}/members", response_model=list[TeamMemberInfo])
+def list_members(
+    team: models.Team = Depends(require_team_member),
+    db: Session = Depends(get_db),
+) -> list[TeamMemberInfo]:
+    """팀원 목록(멤버 누구나). 상세(GET /teams/{id})의 members와 동일 형태·정렬."""
+    return _list_members(team, db)
+
+
+@router.delete("/{team_id}/members/{user_id}", status_code=204)
+def remove_member(
+    user_id: str,
+    team: models.Team = Depends(require_team_leader),
+    db: Session = Depends(get_db),
+) -> None:
+    """팀원 내보내기(팀장 전용). 팀장 자신은 내보낼 수 없다 —
+    '팀장 ∈ 멤버' DEFERRABLE FK를 깨므로. 팀을 뜨려면 /leave(위임 후)로."""
+    if user_id == team.leader_id:
+        raise ApiError(400, "CANNOT_REMOVE_LEADER",
+                       "팀장은 내보낼 수 없어요. 팀을 나가려면 팀 나가기로 위임하세요.")
+    membership = db.get(models.TeamMember, (team.id, user_id))
+    if membership is None:
+        raise ApiError(404, "MEMBER_NOT_FOUND", "해당 팀원을 찾을 수 없어요.")
+    db.delete(membership)
+    db.commit()
+
+
+def _list_members(team: models.Team, db: Session) -> list[TeamMemberInfo]:
+    """팀원 목록(가입순 → user_id) + is_leader 플래그. 상세·멤버목록이 공유."""
+    rows = db.execute(
         select(models.User.id, models.User.name, models.User.username)
         .join(models.TeamMember, models.TeamMember.user_id == models.User.id)
         .where(models.TeamMember.team_id == team.id)
         .order_by(models.TeamMember.joined_at, models.User.id)
     ).all()
-    members = [
+    return [
         TeamMemberInfo(id=r.id, name=r.name, username=r.username,
                        is_leader=(r.id == team.leader_id))
-        for r in member_rows
+        for r in rows
     ]
+
+
+def _to_detail(team: models.Team, db: Session) -> TeamDetail:
+    """팀 상세 응답 구성 — 멤버 목록(가입순) + 발표 수."""
     session_count = db.scalar(
         select(func.count()).select_from(models.RehearsalSession)
         .where(models.RehearsalSession.team_id == team.id)
     )
     return TeamDetail(
         id=team.id, name=team.name, leader_id=team.leader_id,
-        session_count=session_count, members=members, created_at=team.created_at,
+        session_count=session_count, members=_list_members(team, db),
+        created_at=team.created_at,
     )

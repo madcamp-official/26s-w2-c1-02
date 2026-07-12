@@ -319,9 +319,172 @@ class TestAuthRequired:
         ("get", "/team_x", None),
         ("patch", "/team_x", {"name": "팀"}),
         ("delete", "/team_x", None),
+        ("get", "/team_x/members", None),
+        ("delete", "/team_x/members/usr_y", None),
     ])
     def test_401_without_token(self, method, path, body):
         kwargs = {"json": body} if body is not None else {}
         res = getattr(client, method)(f"{TEAMS_URL}{path}", **kwargs)
         assert res.status_code == 401
         assert res.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+# ── 작업 4-3: 멤버 조회·내보내기 ──────────────────────────────────────
+
+class TestListMembers:
+    """GET /teams/{id}/members — 멤버 누구나."""
+
+    def test_leader_sees_members_sorted_with_flags(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "멤버조회"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member(tid, two_users["b"])
+        res = client.get(f"{TEAMS_URL}/{tid}/members", headers=_auth("tmtest_a"))
+        assert res.status_code == 200
+        members = res.json()
+        assert [m["id"] for m in members] == [two_users["a"], two_users["b"]]  # 가입순
+        assert [m["is_leader"] for m in members] == [True, False]
+        assert set(members[0].keys()) == {"id", "name", "username", "is_leader"}
+
+    def test_non_leader_member_can_view(self, two_users):
+        """권한이 '멤버'이므로 팀장이 아니어도 조회된다."""
+        tid = client.post(TEAMS_URL, json={"name": "팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member(tid, two_users["b"])
+        res = client.get(f"{TEAMS_URL}/{tid}/members", headers=_auth("tmtest_b"))
+        assert res.status_code == 200
+        assert len(res.json()) == 2
+
+    def test_matches_detail_members(self, two_users):
+        """GET /members 결과가 GET /teams/{id}의 members와 동일해야 한다."""
+        tid = client.post(TEAMS_URL, json={"name": "일치확인"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member(tid, two_users["b"])
+        h = _auth("tmtest_a")
+        via_members = client.get(f"{TEAMS_URL}/{tid}/members", headers=h).json()
+        via_detail = client.get(f"{TEAMS_URL}/{tid}", headers=h).json()["members"]
+        assert via_members == via_detail
+
+    def test_outsider_gets_404(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "비밀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        res = client.get(f"{TEAMS_URL}/{tid}/members", headers=_auth("tmtest_b"))
+        assert res.status_code == 404
+        assert res.json()["error"]["code"] == "TEAM_NOT_FOUND"
+
+    def test_nonexistent_team_404(self, two_users):
+        res = client.get(f"{TEAMS_URL}/team_ghost/members", headers=_auth("tmtest_a"))
+        assert res.status_code == 404
+        assert res.json()["error"]["code"] == "TEAM_NOT_FOUND"
+
+    def test_solo_team_lists_only_leader(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "혼자팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        members = client.get(f"{TEAMS_URL}/{tid}/members", headers=_auth("tmtest_a")).json()
+        assert len(members) == 1 and members[0]["is_leader"] is True
+
+
+class TestRemoveMember:
+    """DELETE /teams/{id}/members/{userId} — 팀장 전용."""
+
+    def test_leader_removes_member(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "내보내기"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member(tid, two_users["b"])
+        res = client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['b']}",
+                            headers=_auth("tmtest_a"))
+        assert res.status_code == 204
+        with SessionLocal() as db:
+            assert db.get(TeamMember, (tid, two_users["b"])) is None
+        # 목록에서도 사라짐
+        left = client.get(f"{TEAMS_URL}/{tid}/members", headers=_auth("tmtest_a")).json()
+        assert [m["id"] for m in left] == [two_users["a"]]
+
+    def test_removed_member_loses_access(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "축출"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member(tid, two_users["b"])
+        client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['b']}",
+                      headers=_auth("tmtest_a"))
+        # 쫓겨난 B는 더 이상 팀을 못 봄 (목록에도 없고 상세는 404)
+        assert tid not in {t["id"] for t in client.get(TEAMS_URL, headers=_auth("tmtest_b")).json()}
+        assert client.get(f"{TEAMS_URL}/{tid}", headers=_auth("tmtest_b")).status_code == 404
+
+    def test_non_leader_member_forbidden(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member(tid, two_users["b"])
+        # B(비팀장 멤버)가 팀장 A를 내보내려 시도 → 403
+        res = client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['a']}",
+                            headers=_auth("tmtest_b"))
+        assert res.status_code == 403
+        assert res.json()["error"]["code"] == "FORBIDDEN_NOT_LEADER"
+
+    def test_outsider_gets_404_not_403(self, two_users):
+        """비멤버는 팀장 가드 이전에 멤버 가드가 먼저 걸려 404 (존재 은닉)."""
+        tid = client.post(TEAMS_URL, json={"name": "팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        # B는 팀에 넣지 않음 → 완전한 외부인
+        res = client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['a']}",
+                            headers=_auth("tmtest_b"))
+        assert res.status_code == 404
+        assert res.json()["error"]["code"] == "TEAM_NOT_FOUND"
+
+    def test_leader_cannot_remove_self(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "자기제거"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        res = client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['a']}",
+                            headers=_auth("tmtest_a"))
+        assert res.status_code == 400
+        assert res.json()["error"]["code"] == "CANNOT_REMOVE_LEADER"
+        with SessionLocal() as db:  # 여전히 팀장이자 멤버
+            assert db.get(TeamMember, (tid, two_users["a"])) is not None
+            assert db.get(Team, tid).leader_id == two_users["a"]
+
+    def test_remove_non_member_404(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        # B는 멤버가 아님 → 내보낼 대상 없음
+        res = client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['b']}",
+                            headers=_auth("tmtest_a"))
+        assert res.status_code == 404
+        assert res.json()["error"]["code"] == "MEMBER_NOT_FOUND"
+
+    def test_remove_unknown_user_404(self, two_users):
+        tid = client.post(TEAMS_URL, json={"name": "팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        res = client.delete(f"{TEAMS_URL}/{tid}/members/usr_ghost000000000000",
+                            headers=_auth("tmtest_a"))
+        assert res.status_code == 404
+        assert res.json()["error"]["code"] == "MEMBER_NOT_FOUND"
+
+    def test_nonexistent_team_404(self, two_users):
+        res = client.delete(f"{TEAMS_URL}/team_ghost/members/{two_users['b']}",
+                            headers=_auth("tmtest_a"))
+        assert res.status_code == 404
+        assert res.json()["error"]["code"] == "TEAM_NOT_FOUND"
+
+    def test_remove_member_who_owns_sessions(self, two_users):
+        """숨은 뒷탈 확인: 세션을 소유한 멤버를 내보내도 sessions.owner_id RESTRICT가
+        발동하지 않는다 (유저가 아니라 team_members 행만 삭제하므로). 세션은 보존."""
+        tid = client.post(TEAMS_URL, json={"name": "세션보유팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member(tid, two_users["b"])
+        sid = _add_session(tid, two_users["b"], "B의 발표")  # B가 owner인 세션
+
+        res = client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['b']}",
+                            headers=_auth("tmtest_a"))
+        assert res.status_code == 204  # FK 에러(500) 없이 정상
+        with SessionLocal() as db:
+            assert db.get(TeamMember, (tid, two_users["b"])) is None      # 멤버십은 사라짐
+            assert db.get(RehearsalSession, sid) is not None              # 세션은 남음(이력 보존)
+            assert db.get(RehearsalSession, sid).owner_id == two_users["b"]
+
+    def test_double_removal_second_is_404(self, two_users):
+        """멱등성 결여 확인: 같은 멤버를 두 번 내보내면 두 번째는 MEMBER_NOT_FOUND."""
+        tid = client.post(TEAMS_URL, json={"name": "팀"},
+                          headers=_auth("tmtest_a")).json()["id"]
+        _add_member(tid, two_users["b"])
+        h = _auth("tmtest_a")
+        assert client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['b']}", headers=h).status_code == 204
+        r2 = client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['b']}", headers=h)
+        assert r2.status_code == 404 and r2.json()["error"]["code"] == "MEMBER_NOT_FOUND"
