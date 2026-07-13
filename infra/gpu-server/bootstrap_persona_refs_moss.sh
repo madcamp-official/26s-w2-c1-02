@@ -16,6 +16,19 @@ cd "$(dirname "$0")"
 
 PORT=8101
 MODEL="OpenMOSS-Team/MOSS-VoiceGenerator"
+
+# MOSS Audio Tokenizer 로더 패치 (미적용 시 6개 proj 가중치 missing으로 기동 실패).
+# vllm-omni는 gitignore된 중첩 클론이라 패치를 parent repo의 patches/로 관리하고
+# 여기서 idempotent하게 적용한다(재클론/재설치 후 self-heal, start_tts.sh 방식).
+MOSS_PATCH=patches/moss-audio-tokenizer-conditional-proj.patch
+if git -C vllm-omni apply --check "../$MOSS_PATCH" 2>/dev/null; then
+  git -C vllm-omni apply "../$MOSS_PATCH"
+  echo "[bootstrap] MOSS 코덱 패치 적용: $MOSS_PATCH"
+elif git -C vllm-omni apply --reverse --check "../$MOSS_PATCH" 2>/dev/null; then
+  echo "[bootstrap] MOSS 코덱 패치 이미 적용됨"
+else
+  echo "[bootstrap] 경고: $MOSS_PATCH 적용 불가(업스트림 변경?) — 수동 확인 필요"
+fi
 NEED_MIB=18000   # stage0 0.60 + stage1 0.12 of 24GB ≈ 17.7GB 예약
 WAIT_MAX="${WAIT_MAX:-2400}"  # 최대 대기(s) — 첫 실행은 다운로드 포함
 LOG=/tmp/moss_voicegen_bootstrap.log
@@ -53,7 +66,10 @@ export PATH="$CUDA_HOME/bin:$PATH"
 export CUDA_VISIBLE_DEVICES=0
 
 echo "[bootstrap] $MODEL 기동 (포트 $PORT, 로그 $LOG)"
-vllm serve "$MODEL" --omni --host 127.0.0.1 --port "$PORT" >"$LOG" 2>&1 &
+# --stage-configs-path 필수: 미지정 시 moss_tts_delay.yaml을 찾다 실패해 기본값
+# (양 스테이지 0.9)으로 떨어져 stage0가 VRAM을 독식, stage1 OOM (patches yaml 주석 참고).
+vllm serve "$MODEL" --omni --host 127.0.0.1 --port "$PORT" \
+  --stage-configs-path patches/moss_voice_generator_3090.yaml >"$LOG" 2>&1 &
 SERVER_PID=$!
 trap 'echo "[bootstrap] 서버 종료(pid=$SERVER_PID)"; kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true' EXIT
 
@@ -72,4 +88,6 @@ echo "[bootstrap] 서버 준비 완료 (${elapsed}s)"
 
 MOSS_TTS_URL="http://127.0.0.1:$PORT" python3 build_persona_refs_moss.py
 
-echo "[bootstrap] 완료. 기존 서버 복구를 잊지 마세요: bash start_tts.sh / bash start_stt.sh"
+echo "[bootstrap] 완료. 기존 서버 복구:"
+echo "  STT_GPU_MEM_UTIL=0.40 bash start_stt.sh   # 기본 0.25로는 부팅 footprint(~7.5GB)가 예산(5.9GB) 초과로"
+echo "  bash start_tts.sh                          #   'No available memory for cache blocks' 기동 실패 (2026-07-13 실측, README VRAM 조정 참고)"
