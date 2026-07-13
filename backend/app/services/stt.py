@@ -47,6 +47,16 @@ GROUP_GAP_SEC = 0.35
 GROUP_MAX_SEC = 15.0     # 쉼 없이 이어져도 강제 분할 (ts 참조 정밀도 확보)
 
 
+def seconds_to_ts(seconds: float) -> str:
+    """segments.start(초 float) → api-spec §4.3 `ts:"MM:SS"` (내림, 60분 = "60:00").
+
+    GET /transcript 라우터에서 사용 — 저장은 초 float 그대로(db-schema §6.2),
+    변환은 응답 시점에만.
+    """
+    s = int(seconds)  # 내림: 재생 시커가 세그먼트 시작 이전을 가리키지 않게
+    return f"{s // 60:02d}:{s % 60:02d}"
+
+
 class SttError(Exception):
     """STT 실패(서버 오류·재시도 소진). 잡에서 STT_FAILED/retry 처리."""
 
