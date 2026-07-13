@@ -35,18 +35,18 @@
 
 ### 팀원1 (Frontend)
 
-- [ ] 데이터 모델을 `Team/Speech` → `Session` 구조로 교체 (spec §6.1 enum 전부: persona 5종, strategy 4종, AsyncStatus 등)
-- [ ] `MockSessionRepository`를 spec 응답 예시 JSON과 동일한 형태로 재작성 (FE의 "가짜 서버")
-- [ ] 28화면 라우트 골격 + 공통 폴링 위젯(1~2초 간격, `ready|failed` 종료) 1개 구현
-- [ ] 인증 플로우: access 토큰 보관, 401 `TOKEN_EXPIRED` → refresh 재시도 인터셉터 (Web/Native 분기 `X-Client-Platform`)
+- [x] 데이터 모델을 `Team/Speech` → `Session` 구조로 교체 (spec §6.1 enum 전부: persona 5종, strategy 4종, AsyncStatus 등)
+- [x] `MockSessionRepository`를 spec 응답 예시 JSON과 동일한 형태로 재작성 (FE의 "가짜 서버")
+- [x] 28화면 라우트 골격 + 공통 폴링 위젯(1~2초 간격, `ready|failed` 종료) 1개 구현
+- [x] 인증 플로우: access 토큰 보관, 401 `TOKEN_EXPIRED` → refresh 재시도 인터셉터 (Web/Native 분기 `X-Client-Platform`)
 
 ### 팀원2 (Backend Core)
 
 - [x] PostgreSQL 16 기동 + db-schema DDL 전체 적용 (ENUM 12종, 테이블 16개, 트리거)
 - [x] SQLAlchemy(또는 선택 ORM) 모델 + prefix ID 생성기 (`usr_` + base62)
 - [x] `/auth/signup·login·refresh·logout·me` — JWT + refresh 해시 저장, Web=httpOnly 쿠키 / Native=본문 분기
-- [ ] `/teams`, `/teams/{id}/members·leave`, 초대(이메일은 발송 없이 토큰만이라도), 팀장 승계 트랜잭션 (db-schema §7.2)
-- [ ] 파일 스토리지 결정(로컬 디스크 + 서명 URL 흉내도 가능) — `storage_key` 규약 확정
+- [x] `/teams`, `/teams/{id}/members·leave`, 초대(이메일은 발송 없이 토큰만이라도), 팀장 승계 트랜잭션 (db-schema §7.2) — `teams.py`(members·leave·승계)·`invites.py`(이메일/링크·accept/decline) 완료
+- [x] 파일 스토리지 결정(로컬 디스크 + 서명 URL 흉내도 가능) — `storage_key` 규약 확정 (README A10 확정)
 
 ### 팀원3 (AI Pipeline)
 
@@ -64,7 +64,7 @@
 - [ ] `/teams/{id}/sessions` CRUD + 세션 상태머신 (`draft → transcribing → …`, `recording_in_progress` 개명 반영)
 - [ ] `POST /material` 202 → 백그라운드 파싱 잡 → `materials` 갱신 / `retry` / 스캔본 `UNPROCESSABLE_PDF`
 - [ ] `POST /recording` 202 → STT 잡 큐 (STT 서버가 **직렬 처리**이므로 백엔드에 단순 큐 필수 — infra 제약 2)
-- [ ] 권한 검사 공통화: 멤버/팀장/owner (`FORBIDDEN_NOT_OWNER` 등)
+- [~] 권한 검사 공통화: 멤버/팀장/owner (`FORBIDDEN_NOT_OWNER` 등) — `deps.py` `require_team_member`·`require_team_leader`(FORBIDDEN_NOT_LEADER) 완료, 세션 owner 가드(`require_session_owner`)는 세션 라우터와 함께 TODO
 
 ### 팀원3 (AI Pipeline)
 
@@ -79,9 +79,9 @@
 
 ### 팀원1 (Frontend)
 
-- [ ] 발표 준비 화면(04-prep): PDF 업로드 + 전처리 상태 3종 + 페르소나/질의수/제한시간 설정
-- [ ] 발표중 화면(05-present): 타이머(클라이언트 권위), 로컬 녹음, 종료 시 파일 업로드, STT 로딩/실패 화면
-- [ ] 파일 제약 클라이언트 검증 (20MB/50p, 200MB/60분)
+- [x] 발표 준비 화면(04-prep): PDF 업로드 + 전처리 상태 3종 + 페르소나/질의수/제한시간 설정
+- [x] 발표중 화면(05-present): 타이머(클라이언트 권위), 로컬 녹음, 종료 시 파일 업로드, STT 로딩/실패 화면 — 청크 파이프라인(60s+4s)까지 구현
+- [x] 파일 제약 클라이언트 검증 (20MB/50p, 200MB/60분)
 
 ---
 
