@@ -19,9 +19,11 @@ import '../common/responsive_page.dart';
 /// 질의응답 (와이어프레임 06 f1~f3) — 프로젝트의 심장.
 ///
 /// GET /qna 폴링이 단일 소스(spec §4.4). 질문별로:
-///   TTS 재생 → (완료 시) 자동 답변 녹음 → "답변 완료"/제한시간 → 202 제출
-///   → 폴링으로 answer ready·꼬리질문 등장/다음 질문 이동/종료 확정.
-/// 답변 시간초과는 클라이언트가 감지해 제출로 처리(spec §4.4 A12).
+///   TTS 재생 → (완료 시) 답변 시작 대기(30초 카운트다운) → "답변 시작하기"로
+///   녹음 → "답변 완료" → 202 제출 → 폴링으로 answer ready·꼬리질문 등장/다음
+///   질문 이동/종료 확정.
+/// 30초 안에 답변을 시작하지 않으면 클라이언트가 자동 pass 처리한다
+/// (spec §4.4 A12 — 답변 시간초과 → 자동 다음).
 class QnaPage extends StatefulWidget {
   const QnaPage({super.key, required this.sessionId});
   final String sessionId;
@@ -100,6 +102,7 @@ class _GeneratingView extends StatelessWidget {
 enum _Phase {
   waitingTts, // 질문 음성 합성 대기
   playing, // 질문 음성 재생 중
+  awaitingStart, // 재생 완료 → 답변 시작 대기(30초 카운트다운)
   recording, // 답변 녹음 중
   submitting, // 답변 업로드 중
   done, // 제출 완료(이후는 폴링이 상태 표시) 또는 재방문
@@ -123,8 +126,9 @@ class _QuestionView extends StatefulWidget {
 }
 
 class _QuestionViewState extends State<_QuestionView> {
-  /// 답변 제한시간 (spec §4.4 A12 — 초과 시 클라이언트가 제출 처리).
-  static const int _answerLimitSeconds = 90;
+  /// 질문 후 "답변 시작까지"의 제한시간. 초과 시 클라이언트가 자동 pass
+  /// 처리한다(spec §4.4 A12 — 답변 시간초과 → 자동 다음).
+  static const int _answerStartLimitSeconds = 30;
 
   late final AudioPlayerService _player = context.read<AudioPlayerService>();
   late final SessionRepository _repo = context.read<SessionRepository>();
@@ -132,8 +136,9 @@ class _QuestionViewState extends State<_QuestionView> {
   RecorderService? _recorder;
   _Phase _phase = _Phase.waitingTts;
 
-  Timer? _answerTimer;
-  int _answerElapsed = 0;
+  /// 답변 시작 대기 카운트다운.
+  Timer? _waitTimer;
+  int _waitElapsed = 0;
 
   Question get _q => widget.question;
 
@@ -169,17 +174,40 @@ class _QuestionViewState extends State<_QuestionView> {
   Future<void> _playTts() async {
     final url = _q.tts.audioUrl;
     if (url == null) {
-      // 음성 URL이 없으면 재생 없이 바로 녹음으로.
-      await _startRecording();
+      // 음성 URL이 없으면 재생 없이 바로 답변 시작 대기로.
+      _awaitAnswerStart();
       return;
     }
     setState(() => _phase = _Phase.playing);
     await _player.play(url);
     if (!mounted || _phase != _Phase.playing) return; // 중단/다시듣기/화면 이탈
-    await _startRecording(); // 재생 완료 → 자동 답변 녹음 (spec 흐름)
+    _awaitAnswerStart(); // 재생 완료 → 답변 시작 대기(30초)
+  }
+
+  /// 질문 재생 후 30초 카운트다운. 사용자가 답변을 시작하면 멈추고,
+  /// 시간 내에 시작하지 않으면 자동 pass (spec §4.4 A12).
+  void _awaitAnswerStart() {
+    _waitTimer?.cancel();
+    _waitElapsed = 0;
+    setState(() => _phase = _Phase.awaitingStart);
+    _waitTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() => _waitElapsed++);
+      if (_waitElapsed >= _answerStartLimitSeconds) {
+        _waitTimer?.cancel();
+        _autoPassOnTimeout();
+      }
+    });
+  }
+
+  Future<void> _autoPassOnTimeout() async {
+    if (_phase != _Phase.awaitingStart) return;
+    _snack('답변 시작 시간(30초)이 지나 자동으로 넘어갔어요');
+    await _pass();
   }
 
   Future<void> _startRecording([RecorderService? override]) async {
+    _waitTimer?.cancel(); // 답변 시작 → 대기 카운트다운 종료
     final recorder = override ?? context.read<RecorderService>();
     try {
       if (!await recorder.hasPermission()) {
@@ -196,22 +224,13 @@ class _QuestionViewState extends State<_QuestionView> {
       return;
     }
     _recorder = recorder;
-    _answerElapsed = 0;
     setState(() => _phase = _Phase.recording);
-    _answerTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) return;
-      setState(() => _answerElapsed++);
-      if (_answerElapsed >= _answerLimitSeconds) {
-        _finishAnswer(timedOut: true);
-      }
-    });
   }
 
   /// 녹음 종료 → 실제 wav 바이트로 202 제출. 결과는 폴링이 확정.
-  Future<void> _finishAnswer({bool timedOut = false}) async {
+  Future<void> _submitAnswer() async {
     final recorder = _recorder;
     if (_phase != _Phase.recording || recorder == null) return;
-    _answerTimer?.cancel();
     setState(() => _phase = _Phase.submitting);
     try {
       final result = await recorder.stop();
@@ -233,7 +252,7 @@ class _QuestionViewState extends State<_QuestionView> {
 
   /// 다시 듣기 — 진행 중 녹음을 접고 같은 URL을 재생(spec §4.4).
   Future<void> _replay() async {
-    _answerTimer?.cancel();
+    _waitTimer?.cancel();
     final recorder = _recorder;
     _recorder = null;
     if (recorder != null && recorder.isRecording) {
@@ -244,13 +263,13 @@ class _QuestionViewState extends State<_QuestionView> {
   }
 
   Future<void> _pass() async {
-    _answerTimer?.cancel();
+    _waitTimer?.cancel();
     await _stopEverything();
     await _repo.passQuestion(widget.sessionId, _q.id);
   }
 
   Future<void> _end() async {
-    _answerTimer?.cancel();
+    _waitTimer?.cancel();
     await _stopEverything();
     await _repo.endQna(widget.sessionId);
   }
@@ -269,7 +288,7 @@ class _QuestionViewState extends State<_QuestionView> {
 
   @override
   void dispose() {
-    _answerTimer?.cancel();
+    _waitTimer?.cancel();
     unawaited(_player.stop());
     final recorder = _recorder;
     if (recorder != null && recorder.isRecording) {
@@ -367,9 +386,44 @@ class _QuestionViewState extends State<_QuestionView> {
             label: const Text('다시 듣기'),
           ),
         );
-      case _Phase.recording:
-        final remaining = _answerLimitSeconds - _answerElapsed;
+      case _Phase.awaitingStart:
+        final remaining = _answerStartLimitSeconds - _waitElapsed;
         final low = remaining <= 10;
+        return Column(
+          children: [
+            const Text('준비되면 답변을 시작하세요',
+                style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+            const SizedBox(height: 6),
+            Text('답변 시작까지 ${_fmt(remaining < 0 ? 0 : remaining)}',
+                style: TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
+                    color: low ? AppColors.danger : AppColors.accent)),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 56,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                onPressed: () => _startRecording(),
+                icon: const Icon(Icons.mic),
+                label: const Text('답변 시작하기',
+                    style: TextStyle(fontWeight: FontWeight.w800)),
+              ),
+            ),
+            const SizedBox(height: 6),
+            TextButton.icon(
+              onPressed: _replay,
+              icon: const Icon(Icons.replay, size: 16),
+              label: const Text('질문 다시 듣기'),
+            ),
+          ],
+        );
+      case _Phase.recording:
         return Column(
           children: [
             Row(
@@ -382,23 +436,17 @@ class _QuestionViewState extends State<_QuestionView> {
                         fontSize: 13, color: AppColors.textSecondary)),
               ],
             ),
-            const SizedBox(height: 8),
-            Text('남은 시간 ${_fmt(remaining < 0 ? 0 : remaining)}',
-                style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w800,
-                    color: low ? AppColors.danger : AppColors.accent)),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
-              height: 54,
+              height: 56,
               child: FilledButton(
                 style: FilledButton.styleFrom(
                   backgroundColor: AppColors.accent,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14)),
                 ),
-                onPressed: () => _finishAnswer(),
+                onPressed: _submitAnswer,
                 child: const Text('답변 완료',
                     style: TextStyle(fontWeight: FontWeight.w800)),
               ),
