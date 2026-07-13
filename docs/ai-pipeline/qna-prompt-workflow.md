@@ -79,12 +79,22 @@
 - [x] 타게팅 규칙 문장화: "슬라이드에 있으나 transcript에 없음 / 있으나 근거·수치 약함"을 우선순위로
 - [x] evidence 사후검증: `slides`는 실제 `page` 집합 안으로 필터(환각 페이지 제거). `transcript_refs`는 생성 단계에서 `[]`
 
-### C. 꼬리질문 프롬프트
+### C. 꼬리질문 프롬프트 — ✅ 완료 (2026-07-13)
 
-- [ ] depth ≥ 1 이면 즉시 None (A11) — 프롬프트 호출 전 코드 가드
-- [ ] raw STT 견딤: "간투사·비문은 무시하고 내용으로만 판단", 답변이 근거·수치 빈약할 때만 그 지점 파고들기
-- [ ] "생성 안 함" 명시 경로: `follow_up: null` 스키마로 강제, 빈/공백이면 None
-- [ ] 부모 persona 유지, strategy는 답변 약점 유형에 맞게 재선택, evidence는 원 질문 근거 승계 가능
+- [x] depth ≥ 1 이면 즉시 None (A11) — `follow_up` 진입부 코드 가드(`_generate` 미호출)
+- [x] raw STT 견딤: "간투사·비문 무시, 내용으로만 판단", 근거·수치 빈약 지점만 파고들기 — 규칙은
+  `_SYSTEM_INSTRUCTION`[꼬리질문 규칙]에, 이번 건(원 질문·답변)만 contents에
+- [x] "생성 안 함" 명시 경로: `_FollowUpOut{needed:bool}` 스키마로 강제 → `needed=false`이거나
+  text 빈/공백이면 None
+- [x] 부모 persona 유지(라우터 승계 — 기본값 egen 반환), strategy는 답변 약점 유형에 맞게 재선택.
+  evidence 승계는 라우터 몫(follow_up 시그니처가 부모 evidence를 받지 않음)
+
+> **토큰 절약(implicit caching)**: Gemini 2.5는 요청 앞쪽 공통 프리픽스를 자동 캐시한다
+> (2.5 Flash/Pro 최소 2048토큰, 공통 콘텐츠를 앞에 둘수록 적중률↑). 그래서 역할·페르소나
+> 5종·전략 4종·규칙 등 세션 무관 고정분을 하나의 `system_instruction`(`_SYSTEM_INSTRUCTION`)에
+> 모아 `generate_questions`·`follow_up`이 동일 프리픽스로 공유하고, 매번 바뀌는 값만 contents로
+> 보낸다. 꼬리질문 프롬프트(≈수백 토큰)는 단독으론 2048 문턱을 못 넘지만 질문 생성과 프리픽스를
+> 공유해 같은 세션 연속 호출에서 재사용된다.
 
 ### D. 검증
 
