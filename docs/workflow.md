@@ -98,6 +98,10 @@
 
 - [ ] `POST /qna/generate` 202 → 팀원3 서비스 호출 → `questions` 저장 + 질문별 TTS 잡
 - [ ] `POST /answer` **202만 반환** → 답변 STT → `answer.status=ready` → 꼬리질문 판정 → `follow_up_status` + 자식 질문 삽입 + `current_question_id` 이동
+  - **꼬리질문 persona = 부모 질문 persona (라우터가 승계)**: `follow_up()`이 반환하는 `QuestionDraft.persona`는
+    placeholder(`egen` 기본값)다. 팀원3의 서비스는 원 질문의 persona를 인자로 받지 않으므로(시그니처 `follow_up(*, question, answer, depth)`),
+    자식 질문 행을 삽입할 때 **부모 질문의 `persona`로 덮어써야** 한다(전략·evidence는 자식 자체 값 사용, evidence는 필요 시 부모 근거 승계 가능).
+    안 덮으면 전 꼬리질문이 egen 말투/음성으로 나가는 버그. → 계약: [qna-prompt-workflow.md](ai-pipeline/qna-prompt-workflow.md) C단계
 - [ ] `pass`(꼬리 생략), `qna/end`(종료 우선순위 A12), 종료 시 리포트 잡 자동 큐
 - [ ] `GET /qna`가 폴링 단일 소스로 spec 예시와 필드 단위 일치하는지 확인
 
