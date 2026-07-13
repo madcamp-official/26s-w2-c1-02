@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.db.enums import QuestionerPersona, QuestionStrategy
-from app.schemas.qna import Evidence, QuestionDraft, TranscriptRef
+from app.schemas.qna import Evidence, QuestionDraft
 from app.services.llm.base import MAX_FOLLOW_UP_DEPTH, LLMProvider
 
 _SchemaT = TypeVar("_SchemaT", bound=BaseModel)
@@ -40,11 +40,6 @@ _STRATEGY_GUIDE: dict[QuestionStrategy, str] = {
 }
 
 
-def _mmss(seconds: float) -> str:
-    s = int(seconds)
-    return f"{s // 60:02d}:{s % 60:02d}"
-
-
 # ── LLM 출력 스키마(중간형) — 검증 전 원본 ──────────────────────────────────
 
 
@@ -53,7 +48,6 @@ class _QDraft(BaseModel):
     persona: QuestionerPersona
     strategy: QuestionStrategy
     slides: list[int]           # 근거 슬라이드 page 번호
-    transcript_starts: list[float]  # 근거 전사 구간 시작(초)
 
 
 class _QuestionsOut(BaseModel):
@@ -89,7 +83,6 @@ class GeminiLLMProvider(LLMProvider):
         out = await self._generate(prompt, _QuestionsOut, temperature=0.7)
 
         valid_pages = {s.get("page") for s in (slides or []) if s.get("page") is not None}
-        t_range = self._transcript_range(transcript)
 
         drafts: list[QuestionDraft] = []
         for i, q in enumerate(out.questions[:count]):
@@ -101,7 +94,7 @@ class GeminiLLMProvider(LLMProvider):
                 text=q.text.strip(),
                 persona=persona,
                 strategy=q.strategy,
-                evidence=self._clean_evidence(q.slides, q.transcript_starts, valid_pages, t_range),
+                evidence=self._clean_evidence(q.slides, valid_pages),
             ))
         return drafts
 
@@ -154,8 +147,8 @@ class GeminiLLMProvider(LLMProvider):
             "- 슬라이드에 있으나 전사에서 언급되지 않은 지점, 또는 언급했으나 근거·수치가 약한 주장을 우선 겨냥한다.\n"
             "- 질문끼리 관점이 겹치지 않게 한다.\n"
             "- persona는 위 목록 값 중 하나, 그 페르소나의 말투를 반영한다.\n"
-            "- 각 질문의 근거를 slides(페이지 번호 배열)와 transcript_starts(전사 구간 시작 초 배열)로 표기한다. "
-            "근거가 없으면 빈 배열로 둔다. 존재하지 않는 페이지·시간을 지어내지 않는다.\n"
+            "- 각 질문의 근거 슬라이드를 slides(페이지 번호 배열)로 표기한다. "
+            "근거가 없으면 빈 배열로 둔다. 존재하지 않는 페이지를 지어내지 않는다.\n"
         )
 
     def _format_slides(self, slides: list[dict] | None) -> str:
@@ -171,11 +164,15 @@ class GeminiLLMProvider(LLMProvider):
         return "\n".join(out)
 
     def _format_transcript(self, transcript: list[dict] | None) -> str:
+        # 팀 합의: 외부 LLM에는 타임스탬프 없이 텍스트만 보낸다(타게팅용 맥락).
+        # 타임스탬프 포함 원본은 transcripts.segments에 저장돼 리포트 분석에서 쓰인다.
         if not transcript:
             return "(전사 없음)"
         out, used = [], 0
         for seg in transcript:
-            line = f"[{_mmss(float(seg.get('start', 0)))}] {str(seg.get('text', '')).strip()}"
+            line = str(seg.get("text", "")).strip()
+            if not line:
+                continue
             used += len(line)
             if used > _TRANSCRIPT_CHAR_LIMIT:
                 break
@@ -185,27 +182,11 @@ class GeminiLLMProvider(LLMProvider):
     # ── evidence 사후검증 ───────────────────────────────────────────────────
 
     @staticmethod
-    def _transcript_range(transcript: list[dict] | None) -> tuple[float, float] | None:
-        if not transcript:
-            return None
-        starts = [float(s.get("start", 0)) for s in transcript]
-        ends = [float(s.get("end", s.get("start", 0))) for s in transcript]
-        return (min(starts), max(ends))
-
-    @staticmethod
-    def _clean_evidence(
-        slides: list[int], starts: list[float],
-        valid_pages: set, t_range: tuple[float, float] | None,
-    ) -> Evidence:
-        # 환각 근거 제거: 실제 page·시간 범위 밖은 버린다(질문 텍스트는 유지).
+    def _clean_evidence(slides: list[int], valid_pages: set) -> Evidence:
+        # 환각 근거 제거: 실제 page 밖은 버린다(질문 텍스트는 유지).
+        # transcript_refs는 LLM이 타임스탬프를 못 보므로 생성 단계에선 비운다(팀 합의).
         pages = [p for p in dict.fromkeys(slides) if p in valid_pages]
-        refs: list[TranscriptRef] = []
-        if t_range is not None:
-            lo, hi = t_range
-            for st in dict.fromkeys(starts):
-                if lo <= st <= hi:
-                    refs.append(TranscriptRef(start=float(st)))
-        return Evidence(slides=pages, transcript_refs=refs)
+        return Evidence(slides=pages, transcript_refs=[])
 
     # ── 공통 생성 ───────────────────────────────────────────────────────────
 
