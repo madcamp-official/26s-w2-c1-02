@@ -74,6 +74,22 @@ class MaterialStatusOut(BaseModel):
     slide_count: int | None = None   # ready 시 페이지 수
 
 
+class ErrorInfo(BaseModel):
+    code: str
+    message: str
+
+
+class MaterialDetail(BaseModel):
+    """GET /sessions/{id}/material 응답 (api-spec §4.2)."""
+
+    status: AsyncStatus
+    progress: float
+    file_name: str
+    page_count: int | None = None
+    slides: list | None = None       # ready 시 [{"page":1,"text":"..."}]
+    error: ErrorInfo | None = None   # failed 시 {code, message}
+
+
 class RecordingStatusOut(BaseModel):
     status: AsyncStatus
     duration_seconds: int | None = None

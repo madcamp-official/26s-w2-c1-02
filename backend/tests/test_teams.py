@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
 from app.db.enums import QuestionerPersona
 from app.db.models import RehearsalSession, Team, TeamMember, User
@@ -592,10 +592,16 @@ class TestLeaderSuccession:
         same = datetime(2026, 1, 1, tzinfo=timezone.utc)
         _add_member_at(tid, three_users["b"], same)
         _add_member_at(tid, three_users["c"], same)
-        expected = min(three_users["b"], three_users["c"])  # user_id 사전순 최소
 
         assert _leave(tid, "tmtest_a").status_code == 204
         with SessionLocal() as db:
+            # 기대 후임 = DB 콜레이션 기준 user_id 최소. Python min()은 코드포인트 순서라
+            # DB(예: Korean_Korea.utf8)와 불일치 → 랜덤 ID에서 간헐 실패했음.
+            # 승계 쿼리와 동일한 ORDER BY user_id로 기댓값을 뽑아 콜레이션을 일치시킨다.
+            expected = db.execute(
+                text("SELECT x FROM (VALUES (:b), (:c)) t(x) ORDER BY x LIMIT 1"),
+                {"b": three_users["b"], "c": three_users["c"]},
+            ).scalar()
             assert db.get(Team, tid).leader_id == expected
 
     def test_new_leader_gains_leader_powers(self, three_users):

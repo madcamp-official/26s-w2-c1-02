@@ -51,14 +51,17 @@ def answer_key(session_id: str, question_id: str, ext: str) -> str:
 def _resolve(key: str) -> Path:
     """storage_key를 실제 파일 경로로 변환하되, 베이스 디렉터리 밖은 거부한다.
 
-    '../../etc/passwd' 같은 경로 탈출(traversal)을 차단하는 핵심 방어.
+    '../../etc/passwd' 같은 경로 탈출(traversal)을 **키 컴포넌트 검증**으로 차단한다.
+    .resolve()(파일시스템 접근)에 의존하지 않는다 — 동시 업로드로 디렉터리가
+    생성되는 중 .resolve()가 간헐적으로 다른 경로를 반환해 정상 키를 오판하는
+    레이스가 있었다(4-1 재검증에서 발견). 순수 문자열 검증이라 그 레이스가 없다.
     """
     if not key or key.startswith("/") or "\\" in key or "\x00" in key:
         raise StorageError(f"허용되지 않는 키: {key!r}")
-    target = (_BASE_DIR / key).resolve()
-    if target != _BASE_DIR and _BASE_DIR not in target.parents:
-        raise StorageError(f"베이스 디렉터리를 벗어난 키: {key!r}")
-    return target
+    # 빈 컴포넌트("a//b")·상위(".."), 현재(".") 참조를 거부 → base 밖으로 못 나감
+    if any(part in ("", ".", "..") for part in key.split("/")):
+        raise StorageError(f"허용되지 않는 키 컴포넌트: {key!r}")
+    return _BASE_DIR / key
 
 
 # ── 저장 / 조회 / 삭제 ───────────────────────────────────────────────

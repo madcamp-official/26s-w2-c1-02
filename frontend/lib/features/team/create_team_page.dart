@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
@@ -10,8 +9,9 @@ import '../common/app_back_button.dart';
 import '../common/fade_slide_in.dart';
 import '../common/responsive_page.dart';
 
-/// 팀 만들기 (와이어프레임 c1) — spec §3: 팀 이름 + 초대(이메일/링크).
-/// v0.3에서 '프레젠테이션 유형'은 팀이 아니라 세션 설정(페르소나)으로 이동했다.
+/// 팀 만들기 (와이어프레임 c1) — 팀 이름 → 팀원 초대.
+/// 이름 확정 시 팀원 초대 단계가 fade-slide-in으로 등장한다.
+/// (초대 링크는 팀 생성 후 팀 상세 화면에서 발급하므로 여기엔 두지 않음)
 class CreateTeamPage extends StatefulWidget {
   const CreateTeamPage({super.key});
 
@@ -94,11 +94,15 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
               const Text('팀을 만들게요',
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
               const SizedBox(height: 20),
-              const Text('팀 이름', style: TextStyle(color: AppColors.textSecondary)),
+
+              // 1) 팀 이름
+              const Text('팀 이름',
+                  style: TextStyle(color: AppColors.textSecondary)),
               const SizedBox(height: 8),
               TextField(
                 controller: _nameController,
                 maxLength: _maxNameLength + 5,
+                onChanged: (_) => setState(() {}), // 글자수 표시 갱신
                 decoration: InputDecoration(
                   counterText: '',
                   hintText: '팀 이름 입력',
@@ -109,8 +113,7 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                 alignment: Alignment.centerRight,
                 child: Padding(
                   padding: const EdgeInsets.only(top: 4),
-                  child: Text(
-                      '${_nameController.text.length} / $_maxNameLength',
+                  child: Text('${_nameController.text.length} / $_maxNameLength',
                       style: const TextStyle(
                           fontSize: 12, color: AppColors.hint)),
                 ),
@@ -127,7 +130,7 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                 ),
               ),
 
-              // 팀원 초대 — 이름 확정 후 fade-in
+              // 2) 팀원 초대 + 팀 만들기 — 이름 확정 후 fade-in
               if (_nameConfirmed)
                 FadeSlideIn(
                   key: const ValueKey('step-invite'),
@@ -151,8 +154,8 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                           const SizedBox(width: 8),
                           TextButton(
                             style: TextButton.styleFrom(
-                              backgroundColor: AppColors.accent
-                                  .withValues(alpha: 0.15),
+                              backgroundColor:
+                                  AppColors.accent.withValues(alpha: 0.15),
                               foregroundColor: AppColors.accent,
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 16, vertical: 18),
@@ -169,37 +172,15 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                         children: _invitedEmails
                             .map((e) => Chip(
                                   label: Text(e),
-                                  onDeleted: () => setState(
-                                      () => _invitedEmails.remove(e)),
+                                  onDeleted: () =>
+                                      setState(() => _invitedEmails.remove(e)),
                                 ))
                             .toList(),
                       ),
                       const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: TextButton.icon(
-                          style: TextButton.styleFrom(
-                            backgroundColor: AppColors.surface,
-                            foregroundColor: AppColors.textPrimary,
-                          ),
-                          icon: const Icon(Icons.link, size: 18),
-                          label: const Text('초대 링크 복사'),
-                          onPressed: () async {
-                            // 팀 생성 전이므로 안내만 — 생성 후 팀 화면에서 실제 링크 발급.
-                            await Clipboard.setData(const ClipboardData(
-                                text: 'https://rehearsal.io/invites/(팀 생성 후 발급)'));
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text('팀을 만들면 실제 초대 링크가 발급돼요')));
-                            }
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 8),
                       const Text(
-                        '초대를 수락하면 자동으로 팀에 합류돼요.\n팀을 만든 후에도 초대할 수 있어요.',
+                        '초대를 수락하면 자동으로 팀에 합류돼요.\n'
+                        '팀을 만든 후에도 초대 링크로 팀원을 부를 수 있어요.',
                         style: TextStyle(
                             fontSize: 12, color: AppColors.textSecondary),
                       ),

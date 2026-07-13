@@ -8,6 +8,7 @@ import '../../core/theme/app_colors.dart';
 import '../../data/models/enums.dart';
 import '../../data/models/material_info.dart';
 import '../../data/repositories/session_repository.dart';
+import '../../state/session_controller.dart';
 import '../common/app_back_button.dart';
 import '../common/polling_builder.dart';
 import '../common/responsive_page.dart';
@@ -18,9 +19,24 @@ class MaterialStatusPage extends StatelessWidget {
   const MaterialStatusPage({super.key, required this.sessionId});
   final String sessionId;
 
+  /// 진행 방식에 맞춘 CTA 문구. upload 모드는 다음 단계가 파일 업로드다.
+  String _startLabel({required bool ready, required SessionMode? mode}) {
+    if (mode == SessionMode.upload) {
+      return ready ? '녹음 파일 올리기' : '파싱은 두고 녹음 파일 올리기';
+    }
+    return ready ? '발표 시작하기' : '파싱은 두고 발표 시작하기';
+  }
+
   @override
   Widget build(BuildContext context) {
     final repo = context.read<SessionRepository>();
+    // 자료 준비 후 이동할 화면은 세션 진행 방식에 따라 갈린다:
+    // upload 모드는 파일 업로드(d3), 그 외(realtime)는 실시간 녹음(e1).
+    // 세션은 생성 직후 SessionController에 캐시돼 있다(create → load).
+    final mode = context.watch<SessionController>().byId(sessionId)?.mode;
+    final nextRoute = mode == SessionMode.upload
+        ? '/sessions/$sessionId/upload-recording'
+        : '/sessions/$sessionId/present';
 
     return Scaffold(
       appBar: AppBar(leading: const AppBackButton()),
@@ -89,12 +105,11 @@ class MaterialStatusPage extends StatelessWidget {
                             borderRadius: BorderRadius.circular(14)),
                       ),
                       // 자료는 세션과 독립 파싱 — 준비 전에도 발표는 시작 가능 (spec §4).
-                      onPressed: () => context
-                          .pushReplacement('/sessions/$sessionId/present'),
+                      onPressed: () => context.pushReplacement(nextRoute),
                       child: Text(
-                          m?.status == AsyncStatus.ready
-                              ? '발표 시작하기'
-                              : '파싱은 두고 발표 시작하기',
+                          _startLabel(
+                              ready: m?.status == AsyncStatus.ready,
+                              mode: mode),
                           style:
                               const TextStyle(fontWeight: FontWeight.w700)),
                     ),

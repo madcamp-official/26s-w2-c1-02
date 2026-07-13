@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'core/audio/audio_player_service.dart';
 import 'core/audio/recorder_service.dart';
 import 'core/config/env.dart';
 import 'core/network/api_client.dart';
@@ -67,6 +68,10 @@ class _RehearsalAppState extends State<RehearsalApp> {
         Provider<RecorderService>(
           create: (_) => MicRecorderService(),
           dispose: (_, r) => r.dispose(),
+        ),
+        Provider<AudioPlayerService>(
+          create: (_) => JustAudioPlayerService(),
+          dispose: (_, p) => p.dispose(),
         ),
         ChangeNotifierProvider.value(value: _auth),
         ChangeNotifierProvider.value(value: _teams),
