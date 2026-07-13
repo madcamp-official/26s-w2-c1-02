@@ -25,7 +25,8 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.db.enums import QuestionerPersona, QuestionStrategy
 from app.schemas.qna import Evidence, QuestionDraft
-from app.services.llm.base import MAX_FOLLOW_UP_DEPTH, LLMProvider
+from app.schemas.report import ReportDraft
+from app.services.llm.base import MAX_FOLLOW_UP_DEPTH, LLMProvider, build_type_scores
 
 _SchemaT = TypeVar("_SchemaT", bound=BaseModel)
 
@@ -48,6 +49,14 @@ _STRATEGY_GUIDE: dict[QuestionStrategy, str] = {
     QuestionStrategy.numeric_verification: "제시된 수치·근거의 타당성을 검증한다.",
 }
 
+# 답변 채점 기준(§B) — "이 전략 질문에 좋은 답변이란 무엇인가".
+_SCORING_RUBRIC: dict[QuestionStrategy, str] = {
+    QuestionStrategy.detail_probe: "구체적 근거·사례·구현 디테일이 충분한가.",
+    QuestionStrategy.big_picture: "맥락·의의·차별점을 설득력 있게 연결하는가.",
+    QuestionStrategy.basic_concept: "기초 개념을 정확히 이해하고 설명하는가.",
+    QuestionStrategy.numeric_verification: "수치·근거의 타당성을 검증·설명하는가.",
+}
+
 
 def _build_system_instruction() -> str:
     """generate_questions·follow_up 공용 안정 프리픽스(캐시 대상).
@@ -57,8 +66,9 @@ def _build_system_instruction() -> str:
     """
     persona_lines = "\n".join(f"- {p.value}: {_PERSONA_STYLE[p]}" for p in QuestionerPersona)
     strategy_lines = "\n".join(f"- {s.value}: {_STRATEGY_GUIDE[s]}" for s in QuestionStrategy)
+    rubric_lines = "\n".join(f"- {s.value}: {_SCORING_RUBRIC[s]}" for s in QuestionStrategy)
     return (
-        "당신은 발표 리허설 서비스의 예상 질문·꼬리질문 생성기입니다. 항상 한국어로 답합니다.\n\n"
+        "당신은 발표 리허설 서비스의 질문 생성·답변 평가 도우미입니다. 항상 한국어로 답합니다.\n\n"
         f"[질문자 페르소나 5종]\n{persona_lines}\n\n"
         f"[질문 전략 4종 — 각 질문에 하나씩 배정]\n{strategy_lines}\n\n"
         "[공통 규칙]\n"
@@ -68,7 +78,12 @@ def _build_system_instruction() -> str:
         "[꼬리질문 규칙]\n"
         "- 발표자 답변은 STT 원문이라 간투사(어·음)·비문이 섞여 있어도 내용으로만 판단한다.\n"
         "- 답변이 충분히 구체적이면 억지로 꼬리질문을 만들지 않는다(needed=false).\n"
-        "- 근거·수치·설명이 빈약한 지점이 있을 때만, 바로 그 지점을 파고드는 꼬리질문 1개를 만든다(needed=true).\n"
+        "- 근거·수치·설명이 빈약한 지점이 있을 때만, 바로 그 지점을 파고드는 꼬리질문 1개를 만든다(needed=true).\n\n"
+        "[답변 채점 루브릭 — 각 답변을 배정된 전략 기준 0.0~1.0]\n"
+        f"{rubric_lines}\n"
+        "- 답변이 STT 원문이라 간투사·비문이 있어도 내용으로만 평가한다.\n"
+        "- 0.0=전혀 못함, 0.5=보통, 1.0=매우 우수. scores는 답변과 같은 순서로 채운다.\n"
+        "- WPM·필러 수 등 숫자는 계산하거나 지어내지 않는다(정량 지표는 별도 코드 몫).\n"
     )
 
 
@@ -94,6 +109,15 @@ class _FollowUpOut(BaseModel):
     needed: bool                       # 꼬리질문이 필요한가
     text: str | None = None
     strategy: QuestionStrategy | None = None
+
+
+class _AnswerScore(BaseModel):
+    score: float                       # 답변 1건 점수 0.0~1.0 (입력 순서대로)
+
+
+class _ReportOut(BaseModel):
+    scores: list[_AnswerScore]         # 답변과 같은 순서
+    insight: str                       # 세션 코칭 한두 문장
 
 
 class GeminiLLMProvider(LLMProvider):
@@ -162,7 +186,55 @@ class GeminiLLMProvider(LLMProvider):
             follow_up_depth=depth + 1,
         )
 
+    async def generate_report(
+        self,
+        *,
+        answers: list[dict],
+        speech_name: str | None = None,
+    ) -> ReportDraft:
+        # 채점 가능한 답변(전략 유효 + 본문 있음)만 추림 — 순서를 scores와 정렬 기준으로 삼는다.
+        scorable: list[tuple[QuestionStrategy, str, str]] = []
+        for a in answers:
+            text = str(a.get("answer", "")).strip()
+            if not text:
+                continue
+            strategy = a.get("strategy")
+            if not isinstance(strategy, QuestionStrategy):
+                try:
+                    strategy = QuestionStrategy(str(strategy))
+                except ValueError:
+                    continue
+            scorable.append((strategy, str(a.get("question", "")).strip(), text))
+        if not scorable:
+            return ReportDraft(type_scores={}, insight="답변이 없어 평가할 내용이 없습니다.")
+
+        prompt = self._report_prompt(scorable, speech_name)
+        out = await self._generate(prompt, _ReportOut, temperature=0.3)
+
+        # LLM이 답변 수와 다른 개수를 줄 수 있으니 zip으로 안전 정렬(짧은 쪽 기준).
+        pairs = [(strat, sc.score) for (strat, _q, _a), sc in zip(scorable, out.scores)]
+        return ReportDraft(
+            type_scores=build_type_scores(pairs),
+            insight=(out.insight or "").strip(),
+        )
+
     # ── 프롬프트 구성 ───────────────────────────────────────────────────────
+
+    def _report_prompt(
+        self, scorable: list[tuple[QuestionStrategy, str, str]], speech_name: str | None,
+    ) -> str:
+        # 루브릭·규칙은 _SYSTEM_INSTRUCTION(캐시)에 있고, 여기엔 이번 세션 답변만 담는다.
+        lines = []
+        for i, (strategy, question, answer) in enumerate(scorable, 1):
+            lines.append(f"{i}. [전략:{strategy.value}] 질문: {question}\n   답변: {answer}")
+        body = "\n".join(lines)
+        return (
+            "[작업] 답변 채점 + 인사이트\n"
+            f"[발표 제목] {speech_name or '(제목 없음)'}\n\n"
+            f"[답변 목록 — 각 답변을 배정된 전략 기준으로 0.0~1.0 채점]\n{body}\n\n"
+            "scores 배열에 위 번호와 같은 순서로 각 답변의 점수를 채운다.\n"
+            "insight에는 발표자에게 도움이 될 한국어 코칭 한두 문장을 쓴다.\n"
+        )
 
     def _questions_prompt(
         self, speech_name: str, slides: list[dict] | None,
