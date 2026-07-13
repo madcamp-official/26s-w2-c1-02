@@ -1,1 +1,3 @@
 vllm-omni/
+# edge-tts 후보 매트릭스(검수 전 산출물) — 최종 승격본(voices/refs_edge/*.wav)만 커밋
+voices/refs_edge/candidates/
