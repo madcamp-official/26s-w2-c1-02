@@ -4,6 +4,15 @@ google-genai SDK를 사용한다. AI Studio 키("AIza…")와 Vertex AI express
 mode 키("AQ.…") 모두 지원하며, 키 접두사로 엔드포인트를 자동 선택한다.
 출력은 response_schema로 JSON을 강제하고, persona·evidence는 코드에서 사후검증한다.
 세부 계약·격차: docs/ai-pipeline/qna-prompt-workflow.md
+
+토큰 절약(implicit caching): Gemini 2.5는 요청 앞쪽의 '공통 프리픽스'를 자동으로
+캐시해 반복 호출 시 그만큼을 캐시 단가로 청구한다(2.5 Flash/Pro 최소 2048토큰,
+공통 콘텐츠를 앞에 둘수록 적중률↑). 그래서 세션과 무관하게 고정인 역할·페르소나
+사전·전략 가이드·규칙은 전부 하나의 system_instruction(_SYSTEM_INSTRUCTION)으로
+모아 generate_questions·follow_up 두 경로가 똑같이 재사용한다. 매 호출 바뀌는
+값(제목·슬라이드·전사·질문·답변)만 contents로 보낸다. (꼬리질문 프롬프트는 대개
+2048토큰 미만이라 단독으론 캐시 문턱을 못 넘지만, 질문 생성 프롬프트와 프리픽스를
+공유해 같은 세션 연속 호출에서 재사용된다.)
 """
 
 import json
@@ -38,6 +47,33 @@ _STRATEGY_GUIDE: dict[QuestionStrategy, str] = {
     QuestionStrategy.basic_concept: "기초 개념 이해를 확인한다.",
     QuestionStrategy.numeric_verification: "제시된 수치·근거의 타당성을 검증한다.",
 }
+
+
+def _build_system_instruction() -> str:
+    """generate_questions·follow_up 공용 안정 프리픽스(캐시 대상).
+
+    페르소나 5종·전략 4종·규칙은 세션과 무관하게 고정이라 import 시 1회만 만든다.
+    변하는 값(세션 페르소나 목록·자료·답변)은 여기 넣지 않고 contents로 보낸다.
+    """
+    persona_lines = "\n".join(f"- {p.value}: {_PERSONA_STYLE[p]}" for p in QuestionerPersona)
+    strategy_lines = "\n".join(f"- {s.value}: {_STRATEGY_GUIDE[s]}" for s in QuestionStrategy)
+    return (
+        "당신은 발표 리허설 서비스의 예상 질문·꼬리질문 생성기입니다. 항상 한국어로 답합니다.\n\n"
+        f"[질문자 페르소나 5종]\n{persona_lines}\n\n"
+        f"[질문 전략 4종 — 각 질문에 하나씩 배정]\n{strategy_lines}\n\n"
+        "[공통 규칙]\n"
+        "- persona는 호출마다 지정되는 목록 값 중 하나만 쓰고, 그 페르소나의 말투를 반영한다.\n"
+        "- strategy는 위 4종 중 질문 의도에 가장 맞는 하나를 고른다.\n"
+        "- 출력은 지정된 JSON 스키마만 채운다. 스키마 밖 필드나 설명 문장을 덧붙이지 않는다.\n\n"
+        "[꼬리질문 규칙]\n"
+        "- 발표자 답변은 STT 원문이라 간투사(어·음)·비문이 섞여 있어도 내용으로만 판단한다.\n"
+        "- 답변이 충분히 구체적이면 억지로 꼬리질문을 만들지 않는다(needed=false).\n"
+        "- 근거·수치·설명이 빈약한 지점이 있을 때만, 바로 그 지점을 파고드는 꼬리질문 1개를 만든다(needed=true).\n"
+    )
+
+
+# import 시 1회 구성 — 모든 Gemini 호출이 이 동일 프리픽스를 공유한다(implicit caching).
+_SYSTEM_INSTRUCTION = _build_system_instruction()
 
 
 # ── LLM 출력 스키마(중간형) — 검증 전 원본 ──────────────────────────────────
@@ -107,14 +143,13 @@ class GeminiLLMProvider(LLMProvider):
     ) -> QuestionDraft | None:
         if depth >= MAX_FOLLOW_UP_DEPTH:  # A11: 1차 질문(0)에만 꼬리질문 1개
             return None
+        # 판단 규칙(STT 견딤·needed 분기)은 _SYSTEM_INSTRUCTION에 있고, 여기엔 이번 건만 담는다.
         prompt = (
-            "발표 질의응답에서 발표자의 답변을 보고 꼬리질문이 필요한지 판단하세요.\n\n"
+            "[작업] 꼬리질문 판단\n"
             f"[원 질문] {question}\n"
             f"[발표자 답변] {answer}\n\n"
-            "답변은 STT 원문이라 간투사(어, 음)·비문이 섞여 있어도 내용으로만 판단하세요.\n"
-            "답변이 충분히 구체적이면 needed=false로 두세요.\n"
-            "근거·수치·설명이 빈약하면 needed=true로 두고, 그 지점을 파고드는 한국어 꼬리질문 1개와 "
-            "그에 맞는 strategy를 채우세요.\n"
+            "needed=true면 파고들 한국어 꼬리질문 1개(text)와 그에 맞는 strategy를 채우고, "
+            "아니면 needed=false로 둔다.\n"
         )
         out = await self._generate(prompt, _FollowUpOut, temperature=0.5)
         if not out.needed or not out.text or not out.text.strip():
@@ -133,20 +168,18 @@ class GeminiLLMProvider(LLMProvider):
         self, speech_name: str, slides: list[dict] | None,
         transcript: list[dict] | None, pool: list[QuestionerPersona], count: int,
     ) -> str:
-        persona_lines = "\n".join(f"- {p.value}: {_PERSONA_STYLE[p]}" for p in pool)
-        strategy_lines = "\n".join(f"- {s.value}: {_STRATEGY_GUIDE[s]}" for s in QuestionStrategy)
+        # 안정 규칙·페르소나/전략 정의는 _SYSTEM_INSTRUCTION에 있고, 여기엔 변하는 값만 담는다.
+        persona_pool = ", ".join(p.value for p in pool)
         return (
-            "당신은 발표 리허설 서비스의 예상 질문 생성기입니다.\n"
-            f"아래 발표에 대해 청중이 던질 법한 질문을 정확히 {count}개, 한국어로 만드세요.\n\n"
+            "[작업] 예상 질문 생성\n"
+            f"아래 발표에 대해 청중이 던질 법한 질문을 정확히 {count}개 만드세요.\n\n"
+            f"[이번 세션 페르소나 — 이 목록 안에서만 배정, 고르게 분배] {persona_pool}\n\n"
             f"[발표 제목] {speech_name}\n\n"
-            f"[질문자 페르소나 — 이 목록 안에서만 배정, 고르게 분배]\n{persona_lines}\n\n"
-            f"[질문 전략 — 각 질문에 하나]\n{strategy_lines}\n\n"
             f"[발표 자료(슬라이드)]\n{self._format_slides(slides)}\n\n"
             f"[발표 전사(말한 내용)]\n{self._format_transcript(transcript)}\n\n"
             "규칙:\n"
             "- 슬라이드에 있으나 전사에서 언급되지 않은 지점, 또는 언급했으나 근거·수치가 약한 주장을 우선 겨냥한다.\n"
             "- 질문끼리 관점이 겹치지 않게 한다.\n"
-            "- persona는 위 목록 값 중 하나, 그 페르소나의 말투를 반영한다.\n"
             "- 각 질문의 근거 슬라이드를 slides(페이지 번호 배열)로 표기한다. "
             "근거가 없으면 빈 배열로 둔다. 존재하지 않는 페이지를 지어내지 않는다.\n"
         )
@@ -193,10 +226,12 @@ class GeminiLLMProvider(LLMProvider):
     async def _generate(
         self, prompt: str, schema: type[_SchemaT], *, temperature: float
     ) -> _SchemaT:
+        # system_instruction = 캐시 가능한 공통 프리픽스, contents = 매번 바뀌는 값.
         response = await self._client.aio.models.generate_content(
             model=self._model,
             contents=prompt,
             config=types.GenerateContentConfig(
+                system_instruction=_SYSTEM_INSTRUCTION,
                 response_mime_type="application/json",
                 response_schema=schema,
                 temperature=temperature,
