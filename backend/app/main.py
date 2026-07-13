@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,8 +12,17 @@ from app.api.routes import (
 from app.core.config import settings
 from app.core.errors import ApiError, api_error_handler, validation_error_handler
 from app.db.session import get_db
+from app.services import stt_queue
 
-app = FastAPI(title=settings.app_name, version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 서버 재시작으로 큐(인메모리)가 비었을 때, 미완료 STT 잡을 다시 큐에 넣는다.
+    stt_queue.recover()
+    yield
+
+
+app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 
 # api-spec §1.1 에러 포맷: 라우터가 raise ApiError(...) 하면 여기서 JSON으로 변환
 app.add_exception_handler(ApiError, api_error_handler)

@@ -9,13 +9,10 @@ transcripts.status 폴링으로 확인한다 (queued → processing → ready|fa
 (enqueue 지점만 바뀌고 _run_stt 잡 자체는 그대로 재사용).
 """
 
-import logging
-import os
-import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_session_owner
@@ -23,12 +20,11 @@ from app.core import storage
 from app.core.errors import ApiError
 from app.db import models
 from app.db.enums import AsyncStatus, SessionStatus
-from app.db.session import SessionLocal, get_db
+from app.db.session import get_db
+from app.services import stt_queue
 from app.services.session_state import advance_status
-from app.services.stt import SttError, UnsupportedMediaError, transcribe_recording
 
 router = APIRouter(tags=["recordings"])
-logger = logging.getLogger("rehearsal.recording")
 
 _MAX_BYTES = 200 * 1024 * 1024  # §1.3: 200MB
 _MAX_DURATION = 3600            # §1.3: 60분
@@ -54,59 +50,8 @@ def _audio_ext(file: UploadFile) -> str | None:
     return None
 
 
-def _run_stt(session_id: str) -> None:
-    """백그라운드 STT 잡. 별도 DB 세션. storage에서 파일을 받아 전사 → transcript 갱신.
-
-    예외는 절대 던지지 않는다(백그라운드에서 사라지므로) — 전부 status=failed로 흡수.
-    STT 서버가 직렬이므로 이 잡은 한 번에 하나만 실행돼야 한다(4-2 큐가 보장)."""
-    with SessionLocal() as db:
-        transcript = db.get(models.Transcript, session_id)
-        recording = db.get(models.Recording, session_id)
-        if transcript is None or recording is None:  # 업로드 후 삭제된 경우
-            return
-        transcript.status = AsyncStatus.processing
-        db.commit()
-
-        tmp_path: str | None = None
-        try:
-            data = storage.load(recording.storage_key)
-            suffix = Path(recording.storage_key).suffix or ".bin"
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
-                f.write(data)
-                tmp_path = f.name
-            segments = transcribe_recording(tmp_path)
-        except UnsupportedMediaError as e:
-            _fail(db, transcript, session_id, "UNSUPPORTED_MEDIA", str(e))
-            return
-        except (SttError, FileNotFoundError, OSError) as e:
-            _fail(db, transcript, session_id, "STT_FAILED", str(e))  # retry 대상
-            return
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-
-        transcript.segments = segments
-        transcript.status = AsyncStatus.ready
-        transcript.error_code = None
-        transcript.error_message = None
-        db.commit()
-
-
-def _fail(db: Session, transcript: models.Transcript, session_id: str,
-          code: str, message: str) -> None:
-    transcript.status = AsyncStatus.failed
-    transcript.error_code = code
-    transcript.error_message = message[:500]
-    # 세션도 failed로 (transcribing → failed, 상태 다이어그램). 이미 옮겨졌으면 건드리지 않음.
-    session = db.get(models.RehearsalSession, session_id)
-    if session is not None and session.status == SessionStatus.transcribing:
-        session.status = SessionStatus.failed
-    db.commit()
-
-
 @router.post("/sessions/{session_id}/recording", status_code=202)
 def upload_recording(
-    background: BackgroundTasks,
     file: UploadFile = File(...),
     duration_seconds: int = Form(...),
     started_at: datetime | None = Form(None),
@@ -169,5 +114,5 @@ def upload_recording(
 
     if old_key and old_key != key:  # 확장자 변경 재업로드 → 옛 파일 정리
         storage.delete(old_key)
-    background.add_task(_run_stt, session.id)  # 4-2에서 직렬 큐로 교체
+    stt_queue.enqueue(session.id)  # STT 직렬 큐 (워커가 한 번에 하나씩 처리)
     return {"status": AsyncStatus.queued.value}
