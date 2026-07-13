@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     # refresh 토큰 수명(초). 기본 14일 — 자동 로그인 유지 기간.
     refresh_expires_seconds: int = 14 * 24 * 3600
 
+    # 파일 스토리지 (작업 5, A10). 업로드 파일이 저장되는 로컬 디렉터리.
+    # 상대경로면 backend/ 기준으로 해석된다.
+    storage_dir: str = "storage"
+    # 서명 URL(*_url) 서명·검증용 시크릿. 재시작해도 URL이 유효하려면 값이 고정이어야 함.
+    storage_url_secret: str = "INSECURE-DEV-STORAGE-CHANGE-ME"
+    # 서명 URL 유효시간(초). 기본 1시간 — 재생 중 만료되지 않을 만큼.
+    signed_url_expires_seconds: int = 3600
+
     # LLM 제공자 선택 (mock | gemini)
     llm_provider: str = "mock"
     gemini_api_key: str = ""
