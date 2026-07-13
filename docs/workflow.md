@@ -126,7 +126,7 @@
 
 > 세부 계획·경계·평가 방법: [report-eval-workflow.md](ai-pipeline/report-eval-workflow.md) (숫자=순수 코드 / 판단=LLM 분리)
 
-- [ ] 정량 지표는 **순수 코드**로: WPM, 필러 카운트(원문 기준), over_time — LLM에 숫자 계산 시키지 않기
+- [x] 정량 지표는 **순수 코드**로: WPM, 필러 카운트(원문 기준), over_time — LLM에 숫자 계산 시키지 않기 — `services/report.py` `compute_speaking_metrics()` 완료(WPM 필러 제외 기본, 회귀 8케이스 통과)
 - [ ] 리포트 LLM: 답변별 strategy 채점(`type_scores` 0~1) + `insight` 생성
 - [ ] 프롬프트 회귀 테스트용 고정 입력(샘플 세션 1개) 저장
 

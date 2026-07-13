@@ -20,6 +20,10 @@
 
 ## A. 정량 지표 — 순수 코드 (`services/report.py`)
 
+> ✅ **구현됨(2026-07-13):** `compute_speaking_metrics()` + 필러 사전 `FILLER_WORDS`.
+> 회귀 스냅샷 8케이스 통과([tests/test_report_metrics.py](../../backend/tests/test_report_metrics.py)).
+> WPM은 **필러 제외가 기본**(`exclude_fillers=True`, 팀 결정) — 아래 열린 질문 1 참고.
+
 ### 입력
 - **transcript**: `transcripts.segments` = `[{start, end, text}]` — **타임스탬프 포함 원본**
   (질문 생성에 넘긴 텍스트-온리 버전이 아니라 이쪽. 팀 합의: 시간 근거는 리포트에서만 사용)
@@ -122,7 +126,10 @@ generate_report(*, answers, slides, transcript_text) -> ReportDraft
 
 ## 열린 질문
 
-1. **WPM에서 필러 제외?** — db-schema §9 미정. 현재는 원문 포함. 확정되면 `compute_speaking_metrics`에 플래그.
+1. ~~**WPM에서 필러 제외?**~~ → **결정(2026-07-13): 제외**(`exclude_fillers=True` 기본). 필러는
+   별도 축이라 이중 계산을 피하고 WPM을 "콘텐츠 발화 속도"로 둔다. 같은 사전(`FILLER_WORDS`)이
+   제외·카운트 단일 진실원. `False`로 원문 포함 전환 가능. → **팀원2 후속**: db-schema §3.6
+   `words_per_minute` 주석을 "원문 기준(간투사 포함)" → "콘텐츠 기준(간투사 제외)"으로, §9 항목 해소.
 2. **성장 리포트 insight**(§5.2 growth 응답의 `insight`)를 누가 만드나 — 세션 insight와 별개(회차 비교).
    LLM 재사용(type_scores 시계열 입력) vs 템플릿. **스트레치**로 두고 세션 insight 먼저.
 3. **필러 사전 범위** — 지역·말투 편차. 최소 셋으로 시작하고 실측 로그로 확장.
