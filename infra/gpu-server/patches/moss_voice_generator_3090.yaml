@@ -1,0 +1,17 @@
+# MOSS-VoiceGenerator 3090(24GB) 배포 오버레이 — bootstrap_persona_refs_moss.sh 전용.
+#
+# 왜 필요한가 (2026-07-13 실측):
+# 1) `vllm serve OpenMOSS-Team/MOSS-VoiceGenerator --omni`는 기본 deploy yaml을
+#    model_type(`moss_tts_delay`)로 찾는데 그 파일이 없어 "pipeline defaults"로
+#    떨어진다 → 양 스테이지 gpu_memory_utilization=0.9 → stage0(talker)가 22.7GB를
+#    선점, stage1(codec)이 OOM. 그래서 --stage-configs-path로 명시해야 한다.
+# 2) 원본 moss_voice_generator.yaml(0.60/0.12)은 H100(96GB) 기준 — 24GB에서는
+#    stage1 예산이 0.12*24≈2.8GB뿐이라 코덱(~2GB 가중치+버퍼)이 아슬아슬하다.
+#    3090에 맞게 0.45/0.40으로 재배분(합 0.85, talker 1.7B·ctx 4096에 충분).
+base_config: ../vllm-omni/vllm_omni/deploy/moss_voice_generator.yaml
+
+stages:
+  - stage_id: 0
+    gpu_memory_utilization: 0.45
+  - stage_id: 1
+    gpu_memory_utilization: 0.40

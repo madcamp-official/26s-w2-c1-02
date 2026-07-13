@@ -1,0 +1,28 @@
+diff --git a/vllm_omni/model_executor/models/moss_tts/audio_tokenizer_v2.py b/vllm_omni/model_executor/models/moss_tts/audio_tokenizer_v2.py
+index f3ba18c3..bd8a2635 100644
+--- a/vllm_omni/model_executor/models/moss_tts/audio_tokenizer_v2.py
++++ b/vllm_omni/model_executor/models/moss_tts/audio_tokenizer_v2.py
+@@ -913,10 +913,21 @@ class MossAudioTokenizerProjectedTransformer(StreamingContainer):
+         self.input_dimension = input_dimension
+         self.output_dimension = output_dimension
+ 
+-        self.input_proj = nn.Linear(input_dimension, d_model, bias=False)
++        # 체크포인트는 차원이 같은 블록에 proj 가중치를 저장하지 않는다(업스트림이
++        # 조건부 생성) — 무조건 Linear를 만들면 6개 가중치 missing으로 로드 실패.
++        # 같은 파일의 quantizer proj(아래 1121행 부근)와 동일한 조건부 패턴을 따른다.
++        self.input_proj = (
++            nn.Identity()
++            if input_dimension == d_model
++            else nn.Linear(input_dimension, d_model, bias=False)
++        )
+         self.transformer = MossAudioTokenizerTransformer(d_model=d_model, **kwargs)
+         self.conv_layout = conv_layout
+-        self.output_proj = nn.Linear(d_model, output_dimension, bias=False)
++        self.output_proj = (
++            nn.Identity()
++            if output_dimension == d_model
++            else nn.Linear(d_model, output_dimension, bias=False)
++        )
+ 
+     def forward(self, x, input_lengths, *args, **kwargs):
+         x = self.input_proj(x.transpose(1, 2))  # (B, D, T) -> (B, T, D)
