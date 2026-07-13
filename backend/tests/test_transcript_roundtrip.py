@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import delete, select
 
 from app.db.enums import QuestionerPersona
-from app.db.models import RehearsalSession, Team, Transcript, User
+from app.db.models import RehearsalSession, Team, TeamMember, Transcript, User
 from app.db.session import SessionLocal
 from app.services.stt import seconds_to_ts
 
@@ -75,6 +75,8 @@ def session_id():
         team = Team(name="전사왕복팀", leader_id=user.id)
         db.add(team)
         db.flush()
+        # teams_leader_is_member_fk(deferred): 팀장은 반드시 그 팀의 멤버여야 커밋된다
+        db.add(TeamMember(team_id=team.id, user_id=user.id))
         ses = RehearsalSession(
             team_id=team.id, owner_id=user.id, name="JSONB 왕복 세션",
             personas=[QuestionerPersona.teto], question_count=3, time_limit_minutes=10,

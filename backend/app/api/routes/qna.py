@@ -6,24 +6,45 @@
 """
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_session_owner
+from app.api.deps import require_session_member, require_session_owner
 from app.api.routes.recordings import _audio_ext  # 답변 오디오도 녹음과 동일 형식 세트
 from app.core import storage
 from app.core.errors import ApiError
 from app.db import models
-from app.db.enums import AnswerKind, AnswerStatus, AsyncStatus, FollowUpStatus, SessionStatus
+from app.db.enums import (
+    AnswerKind, AnswerStatus, AsyncStatus, EndedReason, FollowUpStatus, SessionStatus,
+)
 from app.db.session import get_db
-from app.schemas.qna import AnswerOut, PassRequest
+from app.schemas.qna import (
+    AnswerOut,
+    EvidenceOut,
+    PassRequest,
+    QnaStateOut,
+    QnaStatus,
+    QuestionOut,
+    TranscriptRefOut,
+    TtsOut,
+)
+from app.schemas.session import ErrorInfo
 from app.services import qna_jobs, stt_queue
 from app.services.session_state import advance_status
+from app.services.stt import seconds_to_ts
 
 router = APIRouter(tags=["qna"])
 
 # 이미 질문 생성이 시작된(또는 끝난) 세션 — 재접수를 막을 상태들
 _ALREADY_STARTED = {
     SessionStatus.generating_questions,
+    SessionStatus.qna,
+    SessionStatus.completed,
+}
+
+# GET /qna를 볼 수 있는 상태 (질문 생성 이후). 그 전엔 409 QNA_NOT_STARTED.
+_QNA_VIEWABLE = {
+    SessionStatus.generating_questions,  # 생성 중 — questions 빈 채로 폴링 가능
     SessionStatus.qna,
     SessionStatus.completed,
 }
@@ -155,3 +176,94 @@ def pass_question(
         "current_question_id": session.current_question_id,
         "ended_reason": session.qna_ended_reason.value if session.qna_ended_reason else None,
     }
+
+
+# ── 작업 5-2. 사용자 종료 (POST /qna/end) ────────────────────────────
+
+@router.post("/sessions/{session_id}/qna/end", status_code=200)
+def end_qna(
+    session: models.RehearsalSession = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """질의응답 사용자 종료 (owner) → completed + 리포트 자동 큐 (A7).
+
+    A12: 사용자 종료가 최우선순위 → ended_reason=user_end (질의 수 도달 여부와 무관)."""
+    if session.status != SessionStatus.qna:
+        raise ApiError(409, "QNA_NOT_ACTIVE", "질의응답 중일 때만 종료할 수 있어요.")
+    qna_jobs.end_session(db, session, EndedReason.user_end)
+    db.commit()
+    db.refresh(session)
+    return {"status": session.status.value, "ended_reason": session.qna_ended_reason.value}
+
+
+# ── 작업 5-1. Q&A 폴링 소스 (GET /qna, 질문 상세) ─────────────────────
+
+def _answer_out(answer: models.Answer | None) -> AnswerOut:
+    """answers row → AnswerOut. row 부재 = 아직 답 안 함 → status "pending" (db-schema §5)."""
+    if answer is None:
+        return AnswerOut(status="pending", follow_up_status=FollowUpStatus.none)
+    error = None
+    if answer.error_code:
+        error = ErrorInfo(code=answer.error_code, message=answer.error_message or "")
+    return AnswerOut(
+        status=answer.status.value,
+        text=answer.text,
+        audio_url=storage.signed_url(answer.audio_storage_key) if answer.audio_storage_key else None,
+        follow_up_status=answer.follow_up_status,
+        error=error,
+    )
+
+
+def _question_out(question: models.Question, answer: models.Answer | None) -> QuestionOut:
+    """questions(+answers) row → QuestionOut (§4.4). evidence·ts는 서빙 시 포맷."""
+    ev = question.evidence or {}
+    refs = [TranscriptRefOut(ts=seconds_to_ts(r["start"])) for r in ev.get("transcript_refs", [])]
+    tts = TtsOut(
+        status=question.tts_status,
+        audio_url=storage.signed_url(question.tts_storage_key) if question.tts_storage_key else None,
+    )
+    return QuestionOut(
+        id=question.id, order=question.order_index, persona=question.persona,
+        strategy=question.strategy, parent_id=question.parent_id,
+        follow_up_depth=question.follow_up_depth, text=question.text,
+        evidence=EvidenceOut(slides=ev.get("slides", []), transcript_refs=refs),
+        tts=tts, answer=_answer_out(answer),
+    )
+
+
+@router.get("/sessions/{session_id}/qna", response_model=QnaStateOut)
+def get_qna(
+    session: models.RehearsalSession = Depends(require_session_member),
+    db: Session = Depends(get_db),
+) -> QnaStateOut:
+    """Q&A 전체 상태 (멤버) — 폴링 단일 소스 (§4.4). 표시 순서: order_index, follow_up_depth."""
+    if session.status not in _QNA_VIEWABLE:
+        raise ApiError(409, "QNA_NOT_STARTED", "아직 질문 생성 전이에요.")
+
+    questions = db.scalars(
+        select(models.Question)
+        .where(models.Question.session_id == session.id)
+        .order_by(models.Question.order_index, models.Question.follow_up_depth)  # 꼬리는 부모 뒤
+    ).all()
+    items = [_question_out(q, db.get(models.Answer, q.id)) for q in questions]
+
+    status = QnaStatus.ended if session.status == SessionStatus.completed else QnaStatus.in_progress
+    return QnaStateOut(
+        status=status,
+        current_question_id=session.current_question_id,
+        ended_reason=session.qna_ended_reason,
+        questions=items,
+    )
+
+
+@router.get("/sessions/{session_id}/qna/questions/{question_id}", response_model=QuestionOut)
+def get_question(
+    question_id: str,
+    session: models.RehearsalSession = Depends(require_session_member),
+    db: Session = Depends(get_db),
+) -> QuestionOut:
+    """질문 1건 상세 (멤버) — GET /qna의 questions[] 원소와 동일 형태."""
+    question = db.get(models.Question, question_id)
+    if question is None or question.session_id != session.id:
+        raise ApiError(404, "QUESTION_NOT_FOUND", "질문을 찾을 수 없어요.")
+    return _question_out(question, db.get(models.Answer, question_id))
