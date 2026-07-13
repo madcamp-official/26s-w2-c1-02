@@ -75,7 +75,7 @@
 - [x] STT 클라이언트: **5분 청크 분할 + 타임스탬프 오프셋 합산 병합** (ForcedAligner 제약 — 이 스텝 최난도) → [stt-client-workflow.md](ai-pipeline/stt-client-workflow.md)
   - `backend/app/services/stt.py` `transcribe_recording(경로) → [{"start","end","text"}]` (초 float, 문장급)
   - E2E 실측: 2.7분 발표 전사 5.4s(RTF 0.033), 경계 중복 0, CER 0.96%. 팀원2 합류 검증(7단계)만 남음
-- [ ] `transcripts.segments` JSONB 형식(초 단위 float)으로 저장되는지 팀원2와 함께 검증
+- [~] `transcripts.segments` JSONB 형식(초 단위 float)으로 저장되는지 팀원2와 함께 검증 — STT 큐 통합으로 저장 경로는 라이브(업로드→`stt_queue`→`transcripts.segments`, 커밋 707797e). 남은 것: `ts:"MM:SS"` 변환 라우터 연결(현재 `SessionDetail`은 `transcript.status`만 노출, `seconds_to_ts`는 아직 라우터 미연결) → stt-client-workflow §7
 
 ### 팀원1 (Frontend)
 
