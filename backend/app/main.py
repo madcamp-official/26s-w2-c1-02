@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api.routes import auth, files, invites, sessions, speeches, teams
+from app.api.routes import auth, files, invites, materials, sessions, speeches, teams
 from app.core.config import settings
 from app.core.errors import ApiError, api_error_handler, validation_error_handler
 from app.db.session import get_db
@@ -34,6 +34,7 @@ app.include_router(invites.token_router, prefix=API_V1)  # /invites/{token}*
 app.include_router(speeches.router, prefix=API_V1)
 app.include_router(files.router, prefix=API_V1)          # /files/{key}?expires=&sig=
 app.include_router(sessions.router, prefix=API_V1)       # /teams/{id}/sessions, /sessions/{id}
+app.include_router(materials.router, prefix=API_V1)      # /sessions/{id}/material
 
 
 @app.get("/health", tags=["meta"])

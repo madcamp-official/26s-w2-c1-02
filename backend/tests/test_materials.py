@@ -1,0 +1,205 @@
+"""자료 PDF 업로드 + 백그라운드 파싱 회귀 테스트 (작업 3-1·3-2).
+
+실행:
+    cd backend
+    .\\.venv\\Scripts\\python.exe -m pytest tests/test_materials.py -v
+
+TestClient는 BackgroundTasks를 응답 후 동기 실행하므로, POST가 반환된 뒤엔
+파싱이 이미 끝나 있다 → materials.status를 바로 확인할 수 있다.
+"""
+
+import fitz  # PyMuPDF — 테스트용 PDF 즉석 생성
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import delete
+
+from app.core import storage
+from app.db.models import Material, Team, TeamMember, User
+from app.db.session import SessionLocal
+from app.main import app
+
+client = TestClient(app)
+
+
+def _pdf(page_texts: list[str]) -> bytes:
+    """각 문자열이 한 페이지. 빈 문자열 = 텍스트 없는 페이지(스캔본 흉내).
+
+    주의: PyMuPDF 기본 폰트(helv)는 한글 글리프가 없어 한글은 점(·)으로 렌더된다.
+    파서 자체는 언어 무관하므로 테스트 텍스트는 영문으로 쓴다."""
+    doc = fitz.open()
+    for t in page_texts:
+        page = doc.new_page()
+        if t:
+            page.insert_text((72, 72), t)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def _mkuser(u: str) -> str:
+    r = client.post("/api/v1/auth/signup", json={"name": u, "username": u,
+                    "password": "matr-pass-123", "email": f"{u}@t.io"})
+    return r.json()["user"]["id"]
+
+
+def _auth(u: str) -> dict:
+    tok = client.post("/api/v1/auth/login", json={"username": u, "password": "matr-pass-123"},
+                      headers={"X-Client-Platform": "ios"}).json()["access_token"]
+    return {"Authorization": f"Bearer {tok}"}
+
+
+@pytest.fixture()
+def ctx():
+    """owner(발표자)·member·outsider. owner가 세션 하나 보유. → (session_id, storage_key)."""
+    ids = {r: _mkuser(f"matr_{r}") for r in ("owner", "member", "outsider")}
+    tid = client.post("/api/v1/teams", json={"name": "자료팀"}, headers=_auth("matr_owner")).json()["id"]
+    with SessionLocal() as db:
+        db.add(TeamMember(team_id=tid, user_id=ids["member"]))
+        db.commit()
+    sid = client.post(f"/api/v1/teams/{tid}/sessions",
+                      json={"name": "발표", "personas": ["egen"], "question_count": 3,
+                            "time_limit_minutes": 10, "mode": "realtime"},
+                      headers=_auth("matr_owner")).json()["id"]
+    yield sid, ids, tid
+    with SessionLocal() as db:
+        db.execute(delete(Team).where(Team.id == tid))
+        db.execute(delete(User).where(User.username.ilike("matr_%")))
+        db.commit()
+    storage.delete(storage.material_key(sid))
+
+
+def _upload(sid, pdf_bytes, who="matr_owner", filename="deck.pdf", ctype="application/pdf"):
+    return client.post(f"/api/v1/sessions/{sid}/material",
+                       files={"file": (filename, pdf_bytes, ctype)}, headers=_auth(who))
+
+
+def _material(sid) -> Material:
+    with SessionLocal() as db:
+        return db.get(Material, sid)
+
+
+class TestUploadSuccess:
+    def test_valid_pdf_parses_to_ready(self, ctx):
+        sid, _, _ = ctx
+        r = _upload(sid, _pdf(["Cover slide text", "Problem definition text"]))
+        assert r.status_code == 202
+        assert r.json()["status"] == "queued"
+        m = _material(sid)  # BackgroundTask 이미 실행됨
+        assert m.status == "ready"
+        assert m.page_count == 2
+        assert m.progress == 1.0
+        assert m.slides[0]["page"] == 1 and "Cover" in m.slides[0]["text"]
+        assert m.error_code is None
+
+    def test_file_saved_to_storage(self, ctx):
+        sid, _, _ = ctx
+        _upload(sid, _pdf(["x"]))
+        assert storage.exists(storage.material_key(sid))
+
+    def test_reupload_overwrites(self, ctx):
+        sid, _, _ = ctx
+        _upload(sid, _pdf(["first upload"]))
+        _upload(sid, _pdf(["second try", "page two", "page three"]))
+        m = _material(sid)
+        assert m.page_count == 3  # 두 번째 업로드 반영
+        assert "second" in m.slides[0]["text"]
+
+
+class TestUploadFailureParsing:
+    def test_scan_pdf_fails_unprocessable_not_500(self, ctx):
+        """텍스트 레이어 없는 PDF → 업로드는 202, 파싱은 failed UNPROCESSABLE_PDF."""
+        sid, _, _ = ctx
+        r = _upload(sid, _pdf(["", ""]))  # 빈 페이지 = 스캔본 흉내
+        assert r.status_code == 202  # 업로드 자체는 성공
+        m = _material(sid)
+        assert m.status == "failed"
+        assert m.error_code == "UNPROCESSABLE_PDF"
+
+    def test_corrupt_bytes_fails_parse_error(self, ctx):
+        sid, _, _ = ctx
+        r = _upload(sid, b"this is definitely not a pdf")
+        assert r.status_code == 202
+        m = _material(sid)
+        assert m.status == "failed"
+        assert m.error_code == "PDF_PARSE_ERROR"  # retry 대상
+
+
+class TestUploadValidation:
+    def test_non_pdf_extension_415(self, ctx):
+        sid, _, _ = ctx
+        r = _upload(sid, b"hello", filename="notes.txt", ctype="text/plain")
+        assert r.status_code == 415
+        assert r.json()["error"]["code"] == "UNSUPPORTED_MEDIA"
+
+    def test_empty_file_400(self, ctx):
+        sid, _, _ = ctx
+        r = _upload(sid, b"")
+        assert r.status_code == 400
+        assert r.json()["error"]["code"] == "EMPTY_FILE"
+
+    def test_oversize_413(self, ctx, monkeypatch):
+        """20MB 상한 초과 → 413. 상한을 낮춰 대용량 페이로드 없이 경계 로직만 검증."""
+        import app.api.routes.materials as mat
+        monkeypatch.setattr(mat, "_MAX_BYTES", 100)
+        r = _upload(sid=ctx[0], pdf_bytes=b"%PDF" + b"0" * 200)
+        assert r.status_code == 413
+        assert r.json()["error"]["code"] == "FILE_TOO_LARGE"
+
+
+class TestUploadHardening:
+    """재검증(2차) — 실전 엣지 + 동시성."""
+
+    def test_octet_stream_content_type_accepted(self, ctx):
+        """실제 업로드는 content-type이 octet-stream인 경우가 많다 — .pdf면 허용."""
+        sid, _, _ = ctx
+        r = _upload(sid, _pdf(["octet stream"]), ctype="application/octet-stream")
+        assert r.status_code == 202
+        assert _material(sid).status == "ready"
+
+    def test_over_50_pages_unprocessable(self, ctx):
+        """파서 페이지 상한(50) 초과 → failed UNPROCESSABLE_PDF (파이프라인 관통)."""
+        sid, _, _ = ctx
+        _upload(sid, _pdf([f"page {i}" for i in range(51)]))
+        m = _material(sid)
+        assert m.status == "failed" and m.error_code == "UNPROCESSABLE_PDF"
+
+    def test_failed_then_reupload_recovers(self, ctx):
+        """손상본으로 failed 된 뒤 정상 재업로드하면 ready로 복구된다."""
+        sid, _, _ = ctx
+        _upload(sid, b"garbage not pdf")
+        assert _material(sid).status == "failed"
+        _upload(sid, _pdf(["recovered"]))
+        assert _material(sid).status == "ready"
+
+    def test_missing_file_field_422(self, ctx):
+        sid, _, _ = ctx
+        assert client.post(f"/api/v1/sessions/{sid}/material",
+                           headers=_auth("matr_owner")).status_code == 422
+
+    def test_concurrent_first_upload_no_pk_race(self, ctx):
+        """같은 세션 첫 업로드가 동시에 와도 500 없이 둘 다 202 (세션 행 잠금).
+        재검증에서 발견: 잠금 전엔 materials_pkey UniqueViolation → 500 발생."""
+        from concurrent.futures import ThreadPoolExecutor
+        sid, _, _ = ctx
+        body = _pdf(["concurrent"])
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            futures = [ex.submit(_upload, sid, body) for _ in range(2)]
+            codes = sorted(f.result().status_code for f in futures)
+        assert codes == [202, 202]
+        assert _material(sid).status == "ready"
+
+
+class TestUploadPermission:
+    def test_member_not_owner_403(self, ctx):
+        sid, _, _ = ctx
+        assert _upload(sid, _pdf(["x"]), who="matr_member").status_code == 403
+
+    def test_outsider_404(self, ctx):
+        sid, _, _ = ctx
+        assert _upload(sid, _pdf(["x"]), who="matr_outsider").status_code == 404
+
+    def test_requires_auth(self, ctx):
+        sid, _, _ = ctx
+        r = client.post(f"/api/v1/sessions/{sid}/material",
+                        files={"file": ("d.pdf", _pdf(["x"]), "application/pdf")})
+        assert r.status_code == 401
