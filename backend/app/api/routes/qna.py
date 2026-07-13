@@ -14,7 +14,9 @@ from app.api.routes.recordings import _audio_ext  # 답변 오디오도 녹음�
 from app.core import storage
 from app.core.errors import ApiError
 from app.db import models
-from app.db.enums import AnswerKind, AnswerStatus, AsyncStatus, FollowUpStatus, SessionStatus
+from app.db.enums import (
+    AnswerKind, AnswerStatus, AsyncStatus, EndedReason, FollowUpStatus, SessionStatus,
+)
 from app.db.session import get_db
 from app.schemas.qna import (
     AnswerOut,
@@ -174,6 +176,24 @@ def pass_question(
         "current_question_id": session.current_question_id,
         "ended_reason": session.qna_ended_reason.value if session.qna_ended_reason else None,
     }
+
+
+# ── 작업 5-2. 사용자 종료 (POST /qna/end) ────────────────────────────
+
+@router.post("/sessions/{session_id}/qna/end", status_code=200)
+def end_qna(
+    session: models.RehearsalSession = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """질의응답 사용자 종료 (owner) → completed + 리포트 자동 큐 (A7).
+
+    A12: 사용자 종료가 최우선순위 → ended_reason=user_end (질의 수 도달 여부와 무관)."""
+    if session.status != SessionStatus.qna:
+        raise ApiError(409, "QNA_NOT_ACTIVE", "질의응답 중일 때만 종료할 수 있어요.")
+    qna_jobs.end_session(db, session, EndedReason.user_end)
+    db.commit()
+    db.refresh(session)
+    return {"status": session.status.value, "ended_reason": session.qna_ended_reason.value}
 
 
 # ── 작업 5-1. Q&A 폴링 소스 (GET /qna, 질문 상세) ─────────────────────
