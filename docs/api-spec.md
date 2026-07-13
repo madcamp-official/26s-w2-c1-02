@@ -517,7 +517,7 @@ HTTP/1.1 202 Accepted
 }
 ```
 > `filler_word_count`(합계)와 `over_time`(`actual_seconds > time_limit_seconds`)은 클라이언트에서 파생 가능하므로 응답에서 제외.
-> **v0.3 영향(정제 제거):** `filler_words`·`words_per_minute`는 이제 **원문 transcript** 기준으로 집계됩니다. 정제 패스가 간투사를 지우지 않으므로 필러 검출이 오히려 정확해집니다(원문에 간투사가 그대로 남음). `words_per_minute`는 간투사 포함으로 소폭 높게 나올 수 있습니다 — 서버가 필러를 WPM에서 제외할지 여부만 §8에서 확정하면 됩니다. 리포트/질문 생성용 LLM은 외부 API이므로 로컬 정제 LLM 제거의 영향을 받지 않습니다.
+> **v0.3 영향(정제 제거):** `filler_words`·`words_per_minute`는 이제 **원문 transcript** 기준으로 집계됩니다. 정제 패스가 간투사를 지우지 않으므로 필러 검출이 오히려 정확해집니다(원문에 간투사가 그대로 남음). `words_per_minute`는 **콘텐츠 어절 기준(간투사 제외)** 으로 집계됩니다(팀 결정 2026-07-13) — 필러는 `filler_words`로 별도 측정하므로 이중 계산을 피합니다. 리포트/질문 생성용 LLM은 외부 API이므로 로컬 정제 LLM 제거의 영향을 받지 않습니다.
 
 **GET /users/me/report/growth 응답** (E: 유저 스코프 — `type_scores`에서 파생)
 

@@ -37,7 +37,7 @@ TIMEOUT = 300  # 첫 요청은 워밍업 포함이라 여유 있게
 
 # ── 페르소나별 음성 묘사(voice design instructions) + 대사 ────────────────────
 # 묘사는 배우 지시가 아니라 **목소리 자체의 스펙**으로 쓴다(모델 계약).
-# 대사는 build_persona_voices.sh / build_persona_refs_gemini.py 확정본과 동일.
+# 대사는 build_persona_voices.sh 확정본과 동일.
 PERSONAS: list[tuple[str, str, str]] = [
     (
         "egen",

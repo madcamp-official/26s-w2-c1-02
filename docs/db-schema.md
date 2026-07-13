@@ -419,7 +419,7 @@ CREATE TABLE answers (
 CREATE TABLE reports (
     session_id       text PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
     status           async_status NOT NULL DEFAULT 'queued',   -- A7: qna/end 시 자동 생성
-    words_per_minute real,                           -- v0.3: 원문 기준(간투사 포함 여부 §9)
+    words_per_minute real,                           -- 콘텐츠 기준(간투사 제외, 팀 결정 2026-07-13): 원문 transcript에서 필러 어절 빼고 집계
     filler_words     jsonb,                          -- [{"word":"음","count":9}] (§6.4)
     insight          text,
     error_code       text,
@@ -614,7 +614,7 @@ ORDER BY t.created_at DESC;
 | 항목 | 현재 상태 | 스키마 영향 |
 |---|---|---|
 | 데이터 보관 정책(A10) | 미정 | 보관 기한 도입 시 `recordings.expires_at` 등 추가 + 청소 배치. 현재는 무기한 |
-| WPM에서 필러 제외 여부(v0.3 §5.2) | 미정 | 없음(계산 로직만) — `words_per_minute` 의미 주석만 갱신 |
+| ~~WPM에서 필러 제외 여부(v0.3 §5.2)~~ | **결정: 제외(2026-07-13)** | 완료 — §3.6 주석 갱신, `compute_speaking_metrics(exclude_fillers=True)` |
 | TTS 재생성 정책(§8) | 미정 | 없음 — `tts_status='failed'` 재시도는 UPDATE로 충분 |
 | `personas` 배열 중복값 | 앱에서 dedupe | DB CHECK로는 미강제(단순화) |
 | 레이트리밋/쿼터 | 미정 | 도입 시 별도 카운터 테이블 또는 Redis |

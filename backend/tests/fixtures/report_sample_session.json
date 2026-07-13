@@ -1,0 +1,42 @@
+{
+  "session_id": "ses_sample",
+  "speech_name": "실시간 추천 시스템 설계",
+  "duration_seconds": 25.0,
+  "time_limit_minutes": 3,
+  "slides": [
+    {"page": 1, "text": "실시간 추천 시스템 설계"},
+    {"page": 2, "text": "문제 정의: 콜드 스타트와 지연 시간"},
+    {"page": 3, "text": "아키텍처: 후보 생성 + 랭킹 2단계"},
+    {"page": 4, "text": "성능: p99 지연 80ms, CTR 12% 개선"},
+    {"page": 5, "text": "한계와 향후 과제"}
+  ],
+  "transcript": [
+    {"start": 0.0, "end": 4.0, "text": "음 안녕하세요 오늘은 실시간 추천 시스템에 대해 발표하겠습니다"},
+    {"start": 4.0, "end": 9.0, "text": "어 저희가 풀려는 문제는 콜드 스타트와 지연 시간입니다"},
+    {"start": 9.0, "end": 15.0, "text": "아키텍처는 후보 생성과 랭킹 두 단계로 나뉩니다"},
+    {"start": 15.0, "end": 21.0, "text": "음 성능은 p99 지연 팔십 밀리초 시티알 십이 퍼센트 개선했습니다"},
+    {"start": 21.0, "end": 24.0, "text": "어 마지막으로 한계와 향후 과제를 말씀드리겠습니다"}
+  ],
+  "qna": [
+    {
+      "strategy": "basic_concept",
+      "question": "콜드 스타트가 정확히 무엇인가요?",
+      "answer": "신규 유저나 아이템에 상호작용 데이터가 없어 추천이 어려운 상황을 말합니다."
+    },
+    {
+      "strategy": "detail_probe",
+      "question": "후보 생성 단계는 어떻게 구현했나요?",
+      "answer": "어 임베딩 기반 근사 최근접 탐색으로 상위 천 개를 뽑고 랭킹 모델에 넘깁니다."
+    },
+    {
+      "strategy": "numeric_verification",
+      "question": "p99 80ms는 어떤 환경에서 측정한 값인가요?",
+      "answer": "음 그건 아직 정확히 기억이 안 나는데 아마 프로덕션 트래픽이었을 겁니다."
+    },
+    {
+      "strategy": "big_picture",
+      "question": "기존 배치 추천 대비 핵심 차별점은 무엇인가요?",
+      "answer": "실시간 시그널을 반영해 세션 내 관심 변화를 즉시 추천에 반영하는 점이 가장 큰 차별점입니다."
+    }
+  ]
+}
