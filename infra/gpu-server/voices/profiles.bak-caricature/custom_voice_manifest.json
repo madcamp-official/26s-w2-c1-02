@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "model_type": "voxcpm2",
+  "model": "openbmb/VoxCPM2",
+  "voices": {
+    "egen": {
+      "name": "egen",
+      "file": "egen.safetensors",
+      "mode": "reference",
+      "ref_audio_feat_len": 66
+    },
+    "teto": {
+      "name": "teto",
+      "file": "teto.safetensors",
+      "mode": "reference",
+      "ref_audio_feat_len": 68
+    },
+    "kkondae": {
+      "name": "kkondae",
+      "file": "kkondae.safetensors",
+      "mode": "reference",
+      "ref_audio_feat_len": 92
+    },
+    "mungcheong": {
+      "name": "mungcheong",
+      "file": "mungcheong.safetensors",
+      "mode": "reference",
+      "ref_audio_feat_len": 71
+    },
+    "jammin": {
+      "name": "jammin",
+      "file": "jammin.safetensors",
+      "mode": "reference",
+      "ref_audio_feat_len": 64
+    }
+  }
+}
