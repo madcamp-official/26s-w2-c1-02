@@ -97,8 +97,10 @@
   - `synthesize_question(text, persona) → wav bytes`: persona→voice 1:1, **미등록 voice(400) → `default` 자동 폴백**(+프로세스 캐시)
     · 일시 오류(5xx) 백오프 재시도 · 실패 시 `TtsError`(→ `tts_status='failed'`). `list_voices()`로 등록 점검.
   - 검증: 오프라인 9종(`tests/test_tts.py`, MockTransport) + **라이브 E2E 통과** — teto 합성 285KB wav, 미등록 voice 400→default 폴백 실측
-  - ⚠️ 현재 5종 voice는 **캐리커처**(default 합성→피치/템포 변형, 실제 사람 목소리 아님). 사람 레퍼런스 확보 시
-    refs wav 교체 → VoxCPM2 프로파일 재계산((3)단계) → 서버 재기동으로 품질만 갱신 — voice 이름이 유지되므로 **백엔드 수정 0**
+  - ✅ 음색 갱신(2026-07-13, voice-design): 캐리커처 → **VoxCPM2 셀프 캐스팅 세트**(팀 청취 픽, 클로닝 출력 실측
+    CER 0%·최소 MFCC 거리 137) 배포 완료. 라우트 이력(B-2 moss 폐기 · B-3 edge-tts 미채택 · C 셀프 캐스팅 채택)·
+    실측·교체 절차: [persona_voices.md](../infra/gpu-server/persona_voices.md). 사람 레퍼런스(Path A) 확보 시
+    refs wav 교체 → 프로파일 재계산 → 재기동으로 품질만 갱신 — voice 이름이 유지되므로 **백엔드 수정 0**
   - 🔜 저장(`storage.tts_key`)·직렬 큐·`tts_status` 갱신은 팀원2 TTS 잡 몫(경계 규칙) — 조립 스니펫은 tts.py docstring에
 
 ### 팀원2 (Backend Core)

@@ -126,8 +126,12 @@ def analyze(path: Path) -> dict:
     return row
 
 
-def transcribe_cer(path: Path, persona: str, stt_url: str) -> float:
-    """STT 왕복 CER (0.0=완벽). stdlib만 사용 — GPU 서버 /transcribe 호출."""
+def transcribe_cer(path: Path, ref_text: str, stt_url: str) -> float:
+    """STT 왕복 CER (0.0=완벽). stdlib만 사용 — GPU 서버 /transcribe 호출.
+
+    ref_text: 이 오디오가 말했어야 하는 원문 — 레퍼런스는 SCRIPTS, 합성 출력은
+    합성에 넣은 질문 텍스트를 넘긴다.
+    """
     import mimetypes
     import urllib.request
     import uuid
@@ -150,7 +154,7 @@ def transcribe_cer(path: Path, persona: str, stt_url: str) -> float:
     )
     with urllib.request.urlopen(req, timeout=120) as resp:
         text = json.loads(resp.read())["text"]
-    ref, hyp = _norm_for_cer(SCRIPTS[persona]), _norm_for_cer(text)
+    ref, hyp = _norm_for_cer(ref_text), _norm_for_cer(text)
     return _levenshtein(ref, hyp) / max(len(ref), 1)
 
 
@@ -177,7 +181,9 @@ def main() -> None:
         row = analyze(f)
         if args.stt_url and (persona := row.get("persona")):
             try:
-                row["cer_pct"] = round(transcribe_cer(f, persona, args.stt_url) * 100, 1)
+                row["cer_pct"] = round(
+                    transcribe_cer(f, SCRIPTS[persona], args.stt_url) * 100, 1
+                )
             except Exception as e:  # noqa: BLE001 — 채점은 계속
                 row["cer_pct"] = f"오류: {e}"
         results[f.name] = row

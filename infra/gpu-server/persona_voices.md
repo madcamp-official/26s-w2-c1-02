@@ -1,6 +1,7 @@
 # VoxCPM2 페르소나 음성 설계 (5종)
 
-> 상태: **설계 완료 · 음성 자산 미확보(제작 대기)**. 작성 2026-07-11 (팀원3).
+> 상태: **배포 완료 — Path C(셀프 캐스팅) 세트 서비스 중** (2026-07-13, 아래 Path C 절).
+> 작성 2026-07-11 (팀원3) · Path B-3/C 실측·배포 2026-07-13.
 > 대상 페르소나 enum: `egen · teto · kkondae · mungcheong · jammin`
 > (db-schema `questioner_persona`, api-spec §6 `QuestionerPersona`).
 
@@ -152,7 +153,7 @@ backend/.venv/bin/python infra/gpu-server/build_persona_refs_gemini.py
 > aiplatform API 활성화 후에도 `BILLING_DISABLED`로 거부 — Vertex TTS는 무료 티어가
 > 없고, AI Studio 키 신규 발급도 막혀 있어(팀 상황) **B-1은 현재 실행 불가**. → B-2로.
 
-### Path B-2 — 로컬 MOSS-VoiceGenerator (무료·키 불필요, 현재 권장)
+### Path B-2 — 로컬 MOSS-VoiceGenerator (무료·키 불필요 — 결과: 폐기, 아래 참조)
 
 vllm-omni가 지원하는 **MOSS-VoiceGenerator**(OpenMOSS-Team, 1.7B, 24kHz)는 zero-shot
 **voice design** 모델 — 레퍼런스 오디오 없이 `instructions`(자연어 음성 묘사)만으로
@@ -169,6 +170,65 @@ STOP_SERVERS=1 bash bootstrap_persona_refs_moss.sh
 
 한계: B-1과 같은 합성음 재합성 구조라 Path A(사람 녹음)보다 사실감 상한은 낮다.
 장점: 외부 의존 0(키·과금·ToS 없음), 지시문 기반이라 페르소나 연출 가능, 재실행 무료.
+
+> **결과(2026-07-13): 폐기.** 실측상 생성이 불안정 — 문장 중간 truncation(대본 대비
+> 절반 길이·문미 고에너지), 24kHz stereo(권장 스펙 이탈), 저RMS/과침묵. 협업 판정도
+> 품질 미달. 산출물은 `voices/refs_moss/`에 기록용으로만 남김.
+
+### Path B-3 — edge-tts 캐스팅 (실측: 방향 전이 확인, 청취 판정으로 미채택)
+
+Microsoft Edge TTS(edge-tts, 무료·비공식 API)의 **서로 다른 실제 화자**들로
+레퍼런스를 만든 라우트. `build_persona_refs_edge.py`(대본 v2 + 캐스팅 매트릭스,
+페르소나당 2~3후보) + `eval_persona_voices.py`(자동 채점: duration·F0·발화속도·침묵·
+CER·MFCC 거리)로 생성·선발했다. 최종 5종은 `voices/refs_edge/*.wav`.
+
+- **핵심 실측(2026-07-13)**: 클로닝 출력에서 **F0 방향 서열이 설계 그대로 유지**
+  — kkondae 108 < teto 138 < mungcheong 143 < egen 243 < jammin 319 (Hz),
+  CER 0%×10, 최소 MFCC 거리 64.8. 즉 **"진짜 다른 화자(또는 포먼트-정합 프리셰이핑)
+  레퍼런스면 방향이 클로닝을 통과한다"** — 2026-07-11 librosa 피치시프트 실패와 대비
+  (정합성 없는 피치만의 시프트는 전이 안 됨).
+- **미채택 사유**: 팀 청취 판정 "내레이터 톤 + (다국어 화자) 미묘한 외국 억양 = AI
+  냄새". 자연스러움은 VoxCPM2 본연 음색이 우위 → Path C로 대체.
+
+## Path C — VoxCPM2 셀프 캐스팅 (배포 중, 2026-07-13)
+
+**발견**: VoxCPM2 `default`는 고정 화자가 아니라 **요청마다 화자를 샘플링**한다
+(base 5종 실측 F0 117~299Hz). 2026-07-11 캐리커처 라우트의 방향 랜덤성은 librosa
+변형 이전에 베이스 화자 자체가 복불복이었던 것.
+
+**방법** (`build_persona_refs_voxcpm.py`): 페르소나 대본을 default로 N회(기본 6)
+합성 → F0 실측 → 목표 대역 내 샘플을 **선발**(무보정 = VoxCPM2 본연의 자연스러움
+유지) → 대역 미달 페르소나만 parselmouth(Praat change gender)로 포먼트+피치 **정합**
+미세 보정(비율 캡 0.80~1.25). 전체 샘플은 `voices/refs_vox/candidates_vox/`(git 제외),
+승격본은 `voices/refs_vox/*.wav`.
+
+**최종 세트 = 청취 픽** (자동 선발안을 팀이 청취 검수로 오버라이드, s{n}=샘플 번호):
+
+| persona | 픽 | ref F0 | **클로닝 출력 F0(중립문장)** | CER |
+|---|---|---|---|---|
+| teto | s1 (자동 선발과 동일) | 131Hz | **129Hz** | 0% |
+| jammin | s2 | 228Hz | **153Hz** ⚠️ | 0% |
+| mungcheong | s0 | 207Hz | **202Hz** | 0% |
+| kkondae | s5 (무보정) | 264Hz | **217Hz** | 0% |
+| egen | s0 | 254Hz | **246Hz** | 0% |
+
+- 구별성: 출력 최소 MFCC 거리 **137.1** (역대 세트 최고: edge 64.8, 자동선발 vox 110.6).
+- **설계 서열(꼰대 최저~잼민 최고)은 이 세트에서 의도적으로 폐기** — 청취 품질 우선.
+  방향이 다시 필요하면 candidates_vox에서 재선발(kkondae 저음 샘플은 6회 중 0회 —
+  N을 늘려 재샘플링) 또는 Path B-3 세트로 복귀.
+- ⚠️ jammin처럼 **ref F0가 항상 전이되진 않는다**(228→153). 화자/레퍼런스에 따라
+  모델이 재정규화하므로, 레퍼런스 교체 시 반드시 **출력**을 실측할 것
+  (`eval_persona_voices.py` + 합성 테스트 — 아래 검증 절차).
+
+**재현/교체 절차**: refs 교체 → 프로파일 재계산 → 재기동은 위 "음성 자산 확보 후
+설치 방법"의 (1)~(4)와 동일 (백업: `voices/refs.bak-caricature`,
+`voices/profiles.bak-caricature`). 검증은 `eval_persona_voices.py <dir> --distances
+[--stt-url http://<gpu>:8200]`를 레퍼런스와 합성 출력 양쪽에 적용.
+청취 샘플: `voices/out_vox/`(현행 세트), `voices/out_edge/`(B-3 세트) —
+페르소나별 중립/캐릭터 문장 각 1개.
+
+**남은 상한**: 사실감의 상한을 더 올리는 건 여전히 Path A(사람 녹음, 10~20s×5).
+voice 이름이 계약이라 언제든 refs만 교체하면 백엔드 수정 0으로 갱신된다.
 
 ## Qwen3-TTS 라우트(스트레치)를 택할 경우
 
