@@ -93,7 +93,13 @@
 - [x] 꼬리질문 프롬프트: 답변 원문(raw STT — 간투사 포함이니 노이즈 견디게) 입력, 깊이 1 제한, "생성 안 함" 판정 포함 → 동상
   - ✅ 완료(2026-07-13): overlay 단계 A(스키마·시그니처 §4.4 정렬)·B(질문 생성 프롬프트)·C(꼬리질문 프롬프트 + gemini prompt-caching으로 토큰 절약) 구현·커밋. 각 단계 오프라인 검증(persona 라운드로빈·evidence 사후검증·깊이 가드·needed 분기) 통과.
   - 🔜 남음: overlay 단계 **D(회귀 스냅샷 테스트)** + 팀원2 라우터 합류 검증(`POST /qna/generate`→저장→`GET /qna` 필드 일치)
-- [ ] TTS 연동: 질문 텍스트 → 페르소나 wav 참조 → mp3/wav 저장, 큐 처리 (`tts_status`) — `services/tts.py` 미착수
+- [x] TTS 연동: 질문 텍스트 → 페르소나 음색 wav (서버는 wav/pcm만 지원 — mp3 아님) — `services/tts.py` 완료(2026-07-13)
+  - `synthesize_question(text, persona) → wav bytes`: persona→voice 1:1, **미등록 voice(400) → `default` 자동 폴백**(+프로세스 캐시)
+    · 일시 오류(5xx) 백오프 재시도 · 실패 시 `TtsError`(→ `tts_status='failed'`). `list_voices()`로 등록 점검.
+  - 검증: 오프라인 9종(`tests/test_tts.py`, MockTransport) + **라이브 E2E 통과** — teto 합성 285KB wav, 미등록 voice 400→default 폴백 실측
+  - ⚠️ 현재 5종 voice는 **캐리커처**(default 합성→피치/템포 변형, 실제 사람 목소리 아님). 사람 레퍼런스 확보 시
+    refs wav 교체 → VoxCPM2 프로파일 재계산((3)단계) → 서버 재기동으로 품질만 갱신 — voice 이름이 유지되므로 **백엔드 수정 0**
+  - 🔜 저장(`storage.tts_key`)·직렬 큐·`tts_status` 갱신은 팀원2 TTS 잡 몫(경계 규칙) — 조립 스니펫은 tts.py docstring에
 
 ### 팀원2 (Backend Core)
 
