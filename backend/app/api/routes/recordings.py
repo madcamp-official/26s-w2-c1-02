@@ -15,14 +15,16 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_session_owner
+from app.api.deps import require_session_member, require_session_owner
 from app.core import storage
 from app.core.errors import ApiError
 from app.db import models
 from app.db.enums import AsyncStatus, SessionStatus
 from app.db.session import get_db
+from app.schemas.session import ErrorInfo, TranscriptDetail, TranscriptSegmentOut
 from app.services import stt_queue
 from app.services.session_state import advance_status
+from app.services.stt import seconds_to_ts
 
 router = APIRouter(tags=["recordings"])
 
@@ -115,4 +117,52 @@ def upload_recording(
     if old_key and old_key != key:  # 확장자 변경 재업로드 → 옛 파일 정리
         storage.delete(old_key)
     stt_queue.enqueue(session.id)  # STT 직렬 큐 (워커가 한 번에 하나씩 처리)
+    return {"status": AsyncStatus.queued.value}
+
+
+@router.get("/sessions/{session_id}/transcript", response_model=TranscriptDetail)
+def get_transcript(
+    session: models.RehearsalSession = Depends(require_session_member),
+    db: Session = Depends(get_db),
+) -> TranscriptDetail:
+    """전사 상태 + 세그먼트 (멤버). 저장은 초 float, 응답은 ts:"MM:SS" (§4.3)."""
+    transcript = db.get(models.Transcript, session.id)
+    if transcript is None:
+        raise ApiError(404, "TRANSCRIPT_NOT_FOUND", "전사가 아직 없어요. (녹음 업로드 필요)")
+
+    segments = None
+    if transcript.segments is not None:
+        segments = [
+            TranscriptSegmentOut(ts=seconds_to_ts(s["start"]), text=s["text"])
+            for s in transcript.segments
+        ]
+    error = None
+    if transcript.error_code:
+        error = ErrorInfo(code=transcript.error_code, message=transcript.error_message or "")
+    return TranscriptDetail(status=transcript.status, segments=segments, error=error)
+
+
+@router.post("/sessions/{session_id}/transcript/retry", status_code=202)
+def retry_transcript(
+    session: models.RehearsalSession = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """전사 재시도 (owner). 실패한 전사를 queued로 되돌리고 STT 큐 재투입.
+
+    녹음 파일은 storage에 남아 있으므로 재전사만 하면 된다. failed일 때만 의미가 있어
+    ready/processing 중 재시도는 409로 막는다."""
+    transcript = db.get(models.Transcript, session.id)
+    if transcript is None:
+        raise ApiError(404, "TRANSCRIPT_NOT_FOUND", "전사가 아직 없어요.")
+    if transcript.status != AsyncStatus.failed:
+        raise ApiError(409, "TRANSCRIPT_NOT_RETRYABLE", "실패한 전사만 다시 시도할 수 있어요.")
+
+    transcript.status = AsyncStatus.queued
+    transcript.error_code = None
+    transcript.error_message = None
+    if session.status == SessionStatus.failed:  # STT 실패로 failed였다면 transcribing 복귀
+        advance_status(session, SessionStatus.transcribing)
+    db.commit()
+
+    stt_queue.enqueue(session.id)
     return {"status": AsyncStatus.queued.value}

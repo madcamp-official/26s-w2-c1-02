@@ -100,6 +100,19 @@ class TranscriptStatusOut(BaseModel):
     status: AsyncStatus
 
 
+class TranscriptSegmentOut(BaseModel):
+    ts: str      # "MM:SS" — 저장은 초 float, 응답 시 seconds_to_ts로 변환 (§4.3)
+    text: str
+
+
+class TranscriptDetail(BaseModel):
+    """GET /sessions/{id}/transcript 응답 (api-spec §4.3)."""
+
+    status: AsyncStatus
+    segments: list[TranscriptSegmentOut] | None = None
+    error: ErrorInfo | None = None
+
+
 # ── 응답 ──────────────────────────────────────────────────────────────
 
 class SessionDetail(BaseModel):
