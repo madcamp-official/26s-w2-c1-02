@@ -53,6 +53,11 @@ compute_speaking_metrics(segments, duration_seconds, time_limit_minutes)
 
 ## B. 정성 평가 — 리포트 LLM (`services/llm/` 확장, 1콜)
 
+> ✅ **구현됨(2026-07-13):** `LLMProvider.generate_report()` (base·gemini·mock 3곳) + `ReportDraft`
+> ([schemas/report.py](../../backend/app/schemas/report.py)) + 집계 헬퍼 `build_type_scores`.
+> 채점 루브릭은 gemini `_SYSTEM_INSTRUCTION`에 추가(캐시 프리픽스 공유). mock 결정론 스냅샷 6케이스
+> 통과([tests/test_report_llm.py](../../backend/tests/test_report_llm.py)). 라이브 gemini 검수는 §평가 방법 2.
+
 `LLMProvider`에 세 번째 메서드를 추가한다(현재 `generate_questions`·`follow_up` 2개).
 
 ```
@@ -100,11 +105,11 @@ generate_report(*, answers, slides, transcript_text) -> ReportDraft
 
 | # | 격차 | 현재 | 필요 |
 |---|---|---|---|
-| 1 | **정량 서비스 없음** | `services/report.py` 미존재 | `compute_speaking_metrics(...)` 순수 함수 |
-| 2 | **LLM 리포트 메서드 없음** | `LLMProvider`에 2개 메서드뿐 | `generate_report(...)` 추가(base·gemini·mock 3곳) |
-| 3 | **ReportDraft 스키마 없음** | `schemas/`에 report 없음 | `ReportDraft{type_scores, insight}` + 검증기 |
-| 4 | **회귀 픽스처 없음** | 없음 | 고정 세션 JSON + 스냅샷 테스트 |
-| 5 | **필러 사전 미정** | 없음 | 한국어 간투사 사전 상수(팀 리뷰 1회) |
+| 1 | ~~정량 서비스 없음~~ | ✅ `compute_speaking_metrics()` (§A) | — |
+| 2 | ~~LLM 리포트 메서드 없음~~ | ✅ `generate_report()` base·gemini·mock | — |
+| 3 | ~~ReportDraft 스키마 없음~~ | ✅ `ReportDraft{type_scores, insight}` + 클램프 검증기 | — |
+| 4 | **회귀 픽스처(§C)** | 단위 스냅샷은 있음(mock 결정론) | 실 세션 1개 고정 JSON(slides+transcript+Q&A)로 A+B 통합 스냅샷 |
+| 5 | ~~필러 사전 미정~~ | ✅ `FILLER_WORDS`(보수적 기본) | 확장은 열린 질문 3 |
 
 ---
 
