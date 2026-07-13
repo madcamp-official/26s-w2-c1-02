@@ -105,6 +105,7 @@ enum _Phase {
   awaitingStart, // 재생 완료 → 답변 시작 대기(30초 카운트다운)
   recording, // 답변 녹음 중
   submitting, // 답변 업로드 중
+  submitFailed, // 업로드 실패 — 보관한 녹음으로 재제출 가능
   done, // 제출 완료(이후는 폴링이 상태 표시) 또는 재방문
   micDenied, // 마이크 권한 거부/미지원
 }
@@ -135,6 +136,9 @@ class _QuestionViewState extends State<_QuestionView> {
 
   RecorderService? _recorder;
   _Phase _phase = _Phase.waitingTts;
+
+  /// 제출 대기 중인 녹음 바이트 — 업로드 실패 시 재녹음 없이 재제출용.
+  List<int>? _answerBytes;
 
   /// 답변 시작 대기 카운트다운.
   Timer? _waitTimer;
@@ -227,7 +231,7 @@ class _QuestionViewState extends State<_QuestionView> {
     setState(() => _phase = _Phase.recording);
   }
 
-  /// 녹음 종료 → 실제 wav 바이트로 202 제출. 결과는 폴링이 확정.
+  /// 녹음 종료 → 바이트 보관 → 업로드. 녹음은 업로드 성공 전까지 버리지 않는다.
   Future<void> _submitAnswer() async {
     final recorder = _recorder;
     if (_phase != _Phase.recording || recorder == null) return;
@@ -235,19 +239,45 @@ class _QuestionViewState extends State<_QuestionView> {
     try {
       final result = await recorder.stop();
       _recorder = null;
+      _answerBytes = result.wavBytes; // 유실 방지: 업로드 성공 전까지 보관
+    } catch (e) {
+      _recorder = null;
+      _answerBytes = null;
+      if (mounted) {
+        setState(() => _phase = _Phase.submitFailed);
+        _snack('녹음 종료 실패: $e');
+      }
+      return;
+    }
+    await _uploadAnswer();
+  }
+
+  /// 보관한 녹음 바이트로 202 제출. 실패 시 submitFailed로 남아 재제출 가능.
+  Future<void> _uploadAnswer() async {
+    final bytes = _answerBytes;
+    if (bytes == null) return;
+    setState(() => _phase = _Phase.submitting);
+    try {
       await _repo.submitAnswer(
         widget.sessionId,
         _q.id,
         fileName: 'answer.wav',
-        bytes: result.wavBytes,
+        bytes: bytes,
       );
+      _answerBytes = null;
       if (mounted) setState(() => _phase = _Phase.done);
     } catch (e) {
       if (mounted) {
-        setState(() => _phase = _Phase.recording);
-        _snack('답변 제출 실패: $e — 다시 시도해주세요');
+        setState(() => _phase = _Phase.submitFailed);
+        _snack('답변 제출 실패: $e — 다시 제출해주세요');
       }
     }
+  }
+
+  /// 실패한 녹음을 버리고 처음부터 다시 녹음.
+  Future<void> _reRecord() async {
+    _answerBytes = null;
+    await _startRecording();
   }
 
   Future<void> _pass({String reason = 'user'}) async {
@@ -429,6 +459,46 @@ class _QuestionViewState extends State<_QuestionView> {
         );
       case _Phase.submitting:
         return _center(label: '답변을 제출하고 있어요…', spinner: true);
+      case _Phase.submitFailed:
+        final hasBytes = _answerBytes != null;
+        return Column(
+          children: [
+            const Icon(Icons.cloud_off, color: AppColors.danger),
+            const SizedBox(height: 8),
+            const Text('답변 제출에 실패했어요',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Text(
+                hasBytes
+                    ? '녹음은 저장돼 있어요. 네트워크 확인 후 다시 제출해주세요.'
+                    : '다시 녹음해주세요.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 12.5, color: AppColors.textSecondary)),
+            const SizedBox(height: 12),
+            if (hasBytes)
+              SizedBox(
+                width: double.infinity,
+                height: 54,
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.accent,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  onPressed: _uploadAnswer,
+                  child: const Text('다시 제출',
+                      style: TextStyle(fontWeight: FontWeight.w800)),
+                ),
+              ),
+            const SizedBox(height: 6),
+            TextButton.icon(
+              onPressed: _reRecord,
+              icon: const Icon(Icons.mic, size: 16),
+              label: const Text('다시 녹음'),
+            ),
+          ],
+        );
       case _Phase.done:
         return _AnswerStatus(answer: _q.answer);
     }

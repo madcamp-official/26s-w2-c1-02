@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rehearsal/core/network/api_client.dart';
+import 'package:rehearsal/core/network/http_backend.dart';
 import 'package:rehearsal/core/network/mock_backend.dart';
 import 'package:rehearsal/data/models/enums.dart';
 import 'package:rehearsal/data/models/qna.dart';
@@ -118,4 +119,53 @@ void main() {
     expect(ended.status, QnaStatus.ended);
     expect(ended.endedReason, EndedReason.userEnd);
   });
+
+  // 버그 수정 회귀: 업로드 실패 시 서버 미반영 + 같은 바이트 재제출 성공.
+  test('답변 업로드 실패 → 서버 pending 유지 → 재제출 성공', () async {
+    final flaky = _AnswerFlakyBackend(mock);
+    final flakyApi = ApiClient(backend: flaky, platform: ClientPlatform.web);
+    await flakyApi.login('/auth/login', {'username': 'junseo', 'password': 'x'});
+    final flakyRepo = SessionRepository(flakyApi);
+
+    await repo.generateQna(sid);
+    final gen = await pollUntil((q) => q.questions.isNotEmpty);
+    final q1 = gen.questions.first;
+    final bytes = Uint8List(44); // 유효 WAV 헤더 크기 — 재제출 시 동일 바이트
+
+    // 1) 첫 제출은 503 → 예외. 서버엔 아무것도 반영 안 됨.
+    await expectLater(
+      flakyRepo.submitAnswer(sid, q1.id, fileName: 'answer.wav', bytes: bytes),
+      throwsA(isA<ApiException>()),
+    );
+    final afterFail =
+        (await repo.getQna(sid)).questions.firstWhere((x) => x.id == q1.id);
+    expect(afterFail.answer?.status ?? AnswerStatus.pending, AnswerStatus.pending);
+
+    // 2) 같은 바이트 재제출 → 성공 → processing/ready로 진행.
+    await flakyRepo.submitAnswer(sid, q1.id, fileName: 'answer.wav', bytes: bytes);
+    final afterRetry = await pollUntil((q) {
+      final a = q.questions.firstWhere((x) => x.id == q1.id).answer;
+      return a != null && a.status != AnswerStatus.pending;
+    });
+    expect(
+        afterRetry.questions.firstWhere((x) => x.id == q1.id).answer, isNotNull);
+  });
+}
+
+/// 첫 번째 `POST .../answer`만 503으로 떨어뜨리는 백엔드 래퍼(실서버 오류 흉내).
+class _AnswerFlakyBackend implements HttpBackend {
+  _AnswerFlakyBackend(this._inner);
+  final HttpBackend _inner;
+  bool failNextAnswer = true;
+
+  @override
+  Future<BackendResponse> send(BackendRequest r) async {
+    if (r.method == 'POST' && r.path.endsWith('/answer') && failNextAnswer) {
+      failNextAnswer = false;
+      return const BackendResponse(statusCode: 503, json: {
+        'error': {'code': 'UNAVAILABLE', 'message': '일시적 오류'}
+      });
+    }
+    return _inner.send(r);
+  }
 }
