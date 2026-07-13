@@ -1,15 +1,21 @@
-"""STT 직렬 큐 (작업 4-2, infra 제약 2).
+"""STT 직렬 큐 (작업 4-2 · Step 3 작업 0, infra 제약 2).
 
 STT 서버(GPU)는 한 번에 하나만 처리한다. 여러 세션이 동시에 STT를 돌리면 서로 막히거나
-실패하므로, 백엔드에서 **단일 워커 스레드**가 큐에서 세션을 하나씩 꺼내 직렬 처리한다.
+실패하므로, 백엔드에서 **단일 워커 스레드**가 큐에서 잡을 하나씩 꺼내 직렬 처리한다.
 
 계획서는 asyncio.Queue + lifespan을 제안하지만 여기서는 스레드 큐 + 데몬 워커로 구현한다:
 같은 '단일 워커 직렬' 보장을 주면서 lifespan 없이도(module-level TestClient 포함) 동작하고,
 전사 함수가 동기(ffmpeg·httpx 블로킹)라 스레드 모델이 자연스럽다.
 
-    recordings 업로드 라우터:  stt_queue.enqueue(session_id)   # 즉시 반환
-    워커 스레드:               큐에서 하나씩 꺼내 _run_stt 실행 (한 번에 하나)
-    테스트:                    stt_queue.join()  # 큐가 빌 때까지 대기
+**Step 3 작업 0:** 발표 전사와 답변 전사는 **같은 워커 하나**를 공유해야 GPU에서 겹치지
+않는다. 그래서 큐 항목을 `(kind, id)`로 확장하고 워커가 kind로 분기한다:
+    ("recording", session_id) → _run_stt        (발표 전사, 이 모듈)
+    ("answer",    question_id) → qna_jobs.run_answer_stt  (답변 전사 + 꼬리질문, 지연 임포트)
+
+    발표 녹음 라우터:  stt_queue.enqueue(session_id)          # = enqueue_recording (호환)
+    답변 라우터:       stt_queue.enqueue_answer(question_id)
+    워커 스레드:       큐에서 하나씩 꺼내 kind별 잡 실행 (한 번에 하나)
+    테스트:            stt_queue.join()  # 큐가 빌 때까지 대기
 """
 
 import logging
@@ -23,13 +29,14 @@ from sqlalchemy import select
 
 from app.core import storage
 from app.db import models
-from app.db.enums import AsyncStatus, SessionStatus
+from app.db.enums import AnswerStatus, AsyncStatus, SessionStatus
 from app.db.session import SessionLocal
 from app.services.stt import UnsupportedMediaError, transcribe_recording
 
 logger = logging.getLogger("rehearsal.stt_queue")
 
-_queue: "_queue_mod.Queue[str]" = _queue_mod.Queue()
+# 큐 항목: (kind, id) — kind ∈ {"recording", "answer"}
+_queue: "_queue_mod.Queue[tuple[str, str]]" = _queue_mod.Queue()
 _worker: threading.Thread | None = None
 _start_lock = threading.Lock()
 
@@ -90,11 +97,19 @@ def _fail(db, transcript: models.Transcript, session_id: str, code: str, message
 
 def _worker_loop() -> None:
     while True:
-        session_id = _queue.get()
+        kind, item_id = _queue.get()
         try:
-            _run_stt(session_id)
-        except Exception:  # _run_stt가 흡수하지만 최후 방어 — 워커는 죽지 않는다
-            logger.exception("STT 잡 처리 중 예외: %s", session_id)
+            if kind == "recording":
+                _run_stt(item_id)
+            elif kind == "answer":
+                # 답변 전사+꼬리질문은 Q&A 도메인 로직 — 순환 임포트를 피해 지연 임포트.
+                from app.services.qna_jobs import run_answer_stt
+
+                run_answer_stt(item_id)
+            else:  # 방어 — 알 수 없는 kind는 로그만
+                logger.error("알 수 없는 STT 잡 종류: %s", kind)
+        except Exception:  # 잡이 흡수하지만 최후 방어 — 워커는 죽지 않는다
+            logger.exception("STT 잡 처리 중 예외: %s %s", kind, item_id)
         finally:
             _queue.task_done()
 
@@ -108,10 +123,20 @@ def start() -> None:
             _worker.start()
 
 
-def enqueue(session_id: str) -> None:
-    """세션의 STT 잡을 큐에 넣는다. 워커가 직렬로 하나씩 처리."""
+def enqueue_recording(session_id: str) -> None:
+    """세션 발표 녹음의 STT 잡을 큐에 넣는다. 워커가 직렬로 하나씩 처리."""
     start()
-    _queue.put(session_id)
+    _queue.put(("recording", session_id))
+
+
+# 하위 호환 별칭 — 기존 recordings 라우터·테스트가 enqueue(session_id)를 그대로 쓴다.
+enqueue = enqueue_recording
+
+
+def enqueue_answer(question_id: str) -> None:
+    """답변 오디오의 STT 잡을 큐에 넣는다. 발표 전사와 같은 워커를 공유(직렬)."""
+    start()
+    _queue.put(("answer", question_id))
 
 
 def join() -> None:
@@ -120,17 +145,25 @@ def join() -> None:
 
 
 def recover() -> None:
-    """서버 재시작 시 미완료(queued/processing) 전사를 다시 큐에 넣는다.
+    """서버 재시작 시 미완료 전사(발표·답변)를 다시 큐에 넣는다.
 
     인메모리 큐는 재시작 시 비므로, 처리 중이던 잡이 영원히 멈추지 않게 한다.
     앱 시작 훅(main.py lifespan)에서 호출."""
     with SessionLocal() as db:
-        ids = db.scalars(
+        rec_ids = db.scalars(
             select(models.Transcript.session_id).where(
                 models.Transcript.status.in_([AsyncStatus.queued, AsyncStatus.processing])
             )
         ).all()
-    for sid in ids:
-        enqueue(sid)
-    if ids:
-        logger.info("STT 큐 복구: 미완료 %d건 재등록", len(ids))
+        # 답변 STT는 제출 즉시 processing으로 시작하므로 processing만 복구 대상.
+        ans_ids = db.scalars(
+            select(models.Answer.question_id).where(
+                models.Answer.status == AnswerStatus.processing
+            )
+        ).all()
+    for sid in rec_ids:
+        enqueue_recording(sid)
+    for qid in ans_ids:
+        enqueue_answer(qid)
+    if rec_ids or ans_ids:
+        logger.info("STT 큐 복구: 발표 %d건 · 답변 %d건 재등록", len(rec_ids), len(ans_ids))

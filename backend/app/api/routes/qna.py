@@ -1,0 +1,157 @@
+"""질의응답 (Q&A) 라우터 (Step 3, api-spec §4.4).
+
+작업 2: `POST /qna/generate` — 전사 완료 후 slides+transcript+personas로 질문 생성을 접수(202).
+실제 생성·TTS는 백그라운드(qna_jobs.run_generate)에서 돌고, 결과는 GET /qna 폴링(작업 5)으로
+확인한다. 답변·꼬리질문·종료(작업 4·5)는 이후 이 라우터에 추가된다.
+"""
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
+from sqlalchemy.orm import Session
+
+from app.api.deps import require_session_owner
+from app.api.routes.recordings import _audio_ext  # 답변 오디오도 녹음과 동일 형식 세트
+from app.core import storage
+from app.core.errors import ApiError
+from app.db import models
+from app.db.enums import AnswerKind, AnswerStatus, AsyncStatus, FollowUpStatus, SessionStatus
+from app.db.session import get_db
+from app.schemas.qna import AnswerOut, PassRequest
+from app.services import qna_jobs, stt_queue
+from app.services.session_state import advance_status
+
+router = APIRouter(tags=["qna"])
+
+# 이미 질문 생성이 시작된(또는 끝난) 세션 — 재접수를 막을 상태들
+_ALREADY_STARTED = {
+    SessionStatus.generating_questions,
+    SessionStatus.qna,
+    SessionStatus.completed,
+}
+
+_MAX_ANSWER_BYTES = 200 * 1024 * 1024  # §1.3: 200MB (답변은 짧지만 상한은 녹음과 동일)
+
+
+@router.post("/sessions/{session_id}/qna/generate", status_code=202)
+def generate_questions(
+    background: BackgroundTasks,
+    session: models.RehearsalSession = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """질문 생성 접수 (owner) → 202. 전사(+자료)가 준비됐을 때만.
+
+    선행조건: 발표 전사 ready. 자료가 **있으면** 그것도 ready여야 한다(없으면 자료 없이 진행).
+    상태는 transcribing/failed(생성 재시도)에서만 generating_questions로 전이된다.
+    """
+    # 중복 방지 — 이미 생성 중/완료면 재접수 거부 (전사 검사보다 먼저: 더 명확한 메시지)
+    if session.status in _ALREADY_STARTED:
+        raise ApiError(409, "QNA_ALREADY_STARTED", "이미 질문 생성이 시작됐어요.")
+
+    transcript = db.get(models.Transcript, session.id)
+    if transcript is None or transcript.status != AsyncStatus.ready:
+        raise ApiError(409, "TRANSCRIPT_NOT_READY", "발표 전사가 끝난 뒤 질문을 생성할 수 있어요.")
+
+    material = db.get(models.Material, session.id)
+    if material is not None and material.status != AsyncStatus.ready:
+        # 자료가 남아 있는데 아직 처리 중/실패면 먼저 정리(재시도 또는 삭제)해야 한다.
+        raise ApiError(409, "MATERIAL_NOT_READY",
+                       "자료 처리가 끝난 뒤 질문을 생성할 수 있어요. (자료를 지우면 자료 없이 진행돼요)")
+
+    # transcribing → generating_questions (실패 후 재시도면 failed → generating_questions).
+    # 허용되지 않은 상태(draft 등)면 여기서 409 INVALID_STATE_TRANSITION.
+    advance_status(session, SessionStatus.generating_questions)
+    db.commit()
+
+    background.add_task(qna_jobs.run_generate, session.id)
+    return {"status": SessionStatus.generating_questions.value}
+
+
+# ── 작업 4. 답변 제출 · 패스 ──────────────────────────────────────────
+
+def _require_current_question(
+    session: models.RehearsalSession, question_id: str, db: Session,
+) -> models.Question:
+    """세션이 qna이고, question_id가 이 세션의 **현재 차례** 질문인지 확인."""
+    if session.status != SessionStatus.qna:
+        raise ApiError(409, "QNA_NOT_ACTIVE", "질의응답 중일 때만 할 수 있어요.")
+    question = db.get(models.Question, question_id)
+    if question is None or question.session_id != session.id:
+        raise ApiError(404, "QUESTION_NOT_FOUND", "질문을 찾을 수 없어요.")
+    if session.current_question_id != question_id:
+        raise ApiError(409, "NOT_CURRENT_QUESTION", "지금 답할 차례의 질문이 아니에요.")
+    return question
+
+
+@router.post("/sessions/{session_id}/qna/questions/{question_id}/answer", status_code=202)
+def submit_answer(
+    question_id: str,
+    file: UploadFile = File(...),
+    duration_seconds: int = Form(...),
+    session: models.RehearsalSession = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """답변 오디오 업로드 → **202 접수만**. STT·꼬리질문은 비동기(§4.4 A 수정).
+
+    실패 답변 재제출은 같은 질문에 덮어쓰기. 결과는 GET /qna 폴링으로 확정."""
+    question = _require_current_question(session, question_id, db)
+    ext = _audio_ext(file)
+    if ext is None:
+        raise ApiError(415, "UNSUPPORTED_MEDIA", "mp3 · wav · m4a 파일만 올릴 수 있어요.")
+    if duration_seconds < 0:
+        raise ApiError(400, "INVALID_DURATION", "재생 길이가 올바르지 않아요.")
+
+    data = file.file.read()
+    if len(data) == 0:
+        raise ApiError(400, "EMPTY_FILE", "빈 파일이에요.")
+    if len(data) > _MAX_ANSWER_BYTES:
+        raise ApiError(413, "FILE_TOO_LARGE", "답변은 200MB 이하만 올릴 수 있어요.")
+
+    key = storage.answer_key(session.id, question_id, ext)
+    storage.save(key, data)
+
+    answer = db.get(models.Answer, question_id)
+    old_key = answer.audio_storage_key if answer is not None else None
+    if answer is None:
+        answer = models.Answer(
+            question_id=question_id, kind=AnswerKind.answered, status=AnswerStatus.processing,
+            audio_storage_key=key, duration_seconds=duration_seconds,
+            follow_up_status=FollowUpStatus.pending,
+        )
+        db.add(answer)
+    else:  # 재제출 — 덮어쓰기 + 상태 초기화
+        answer.kind = AnswerKind.answered
+        answer.status = AnswerStatus.processing
+        answer.audio_storage_key = key
+        answer.duration_seconds = duration_seconds
+        answer.follow_up_status = FollowUpStatus.pending
+        answer.text = None
+        answer.error_code = None
+        answer.error_message = None
+    db.commit()
+
+    if old_key and old_key != key:  # 확장자 변경 재제출 → 옛 파일 정리
+        storage.delete(old_key)
+    stt_queue.enqueue_answer(question_id)  # 발표 전사와 같은 직렬 워커
+
+    return {"answer": AnswerOut(
+        status=AnswerStatus.processing.value, text=None,
+        audio_url=storage.signed_url(key), follow_up_status=FollowUpStatus.pending,
+    ).model_dump()}
+
+
+@router.post("/sessions/{session_id}/qna/questions/{question_id}/pass", status_code=200)
+def pass_question(
+    question_id: str,
+    body: PassRequest | None = None,
+    session: models.RehearsalSession = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """답변 패스 → 꼬리질문 생략하고 다음 질문. 마지막을 timeout으로 넘기면 종료 사유=timeout."""
+    question = _require_current_question(session, question_id, db)
+    reason = body.reason if body is not None else "user"
+    qna_jobs.record_pass(db, session, question, reason)
+    db.refresh(session)
+    return {
+        "status": session.status.value,
+        "current_question_id": session.current_question_id,
+        "ended_reason": session.qna_ended_reason.value if session.qna_ended_reason else None,
+    }
