@@ -203,7 +203,7 @@ class _QuestionViewState extends State<_QuestionView> {
   Future<void> _autoPassOnTimeout() async {
     if (_phase != _Phase.awaitingStart) return;
     _snack('답변 시작 시간(30초)이 지나 자동으로 넘어갔어요');
-    await _pass();
+    await _pass(reason: 'timeout');
   }
 
   Future<void> _startRecording([RecorderService? override]) async {
@@ -250,22 +250,10 @@ class _QuestionViewState extends State<_QuestionView> {
     }
   }
 
-  /// 다시 듣기 — 진행 중 녹음을 접고 같은 URL을 재생(spec §4.4).
-  Future<void> _replay() async {
-    _waitTimer?.cancel();
-    final recorder = _recorder;
-    _recorder = null;
-    if (recorder != null && recorder.isRecording) {
-      await recorder.stop();
-    }
-    await _player.stop();
-    await _playTts();
-  }
-
-  Future<void> _pass() async {
+  Future<void> _pass({String reason = 'user'}) async {
     _waitTimer?.cancel();
     await _stopEverything();
-    await _repo.passQuestion(widget.sessionId, _q.id);
+    await _repo.passQuestion(widget.sessionId, _q.id, reason: reason);
   }
 
   Future<void> _end() async {
@@ -377,15 +365,7 @@ class _QuestionViewState extends State<_QuestionView> {
         return _center(
             label: '질문 음성을 준비하고 있어요…', spinner: true);
       case _Phase.playing:
-        return _center(
-          label: '질문을 듣고 있어요',
-          icon: Icons.volume_up,
-          child: TextButton.icon(
-            onPressed: _replay,
-            icon: const Icon(Icons.replay, size: 18),
-            label: const Text('다시 듣기'),
-          ),
-        );
+        return _center(label: '질문을 듣고 있어요', icon: Icons.volume_up);
       case _Phase.awaitingStart:
         final remaining = _answerStartLimitSeconds - _waitElapsed;
         final low = remaining <= 10;
@@ -414,12 +394,6 @@ class _QuestionViewState extends State<_QuestionView> {
                 label: const Text('답변 시작하기',
                     style: TextStyle(fontWeight: FontWeight.w800)),
               ),
-            ),
-            const SizedBox(height: 6),
-            TextButton.icon(
-              onPressed: _replay,
-              icon: const Icon(Icons.replay, size: 16),
-              label: const Text('질문 다시 듣기'),
             ),
           ],
         );
@@ -450,12 +424,6 @@ class _QuestionViewState extends State<_QuestionView> {
                 child: const Text('답변 완료',
                     style: TextStyle(fontWeight: FontWeight.w800)),
               ),
-            ),
-            const SizedBox(height: 6),
-            TextButton.icon(
-              onPressed: _replay,
-              icon: const Icon(Icons.replay, size: 16),
-              label: const Text('질문 다시 듣기'),
             ),
           ],
         );

@@ -143,8 +143,12 @@ class SessionRepository {
       _api.upload('/sessions/$sessionId/qna/questions/$questionId/answer',
           fileName: fileName, bytes: bytes);
 
-  Future<void> passQuestion(String sessionId, String questionId) =>
-      _api.post('/sessions/$sessionId/qna/questions/$questionId/pass');
+  /// 답변 스킵/패스. [reason]='timeout'은 답변 시작 시간초과 자동 패스
+  /// (spec §4.4 — 서버가 ended_reason 확정에 사용).
+  Future<void> passQuestion(String sessionId, String questionId,
+          {String reason = 'user'}) =>
+      _api.post('/sessions/$sessionId/qna/questions/$questionId/pass',
+          body: {'reason': reason});
 
   Future<void> endQna(String sessionId) =>
       _api.post('/sessions/$sessionId/qna/end');

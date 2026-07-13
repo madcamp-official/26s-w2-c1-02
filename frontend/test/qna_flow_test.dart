@@ -98,6 +98,17 @@ void main() {
     expect(ended.endedReason, EndedReason.countReached);
   });
 
+  test('답변 시작 시간초과(pass reason=timeout) → ended_reason=timeout', () async {
+    await repo.generateQna(sid);
+    final gen = await pollUntil((q) => q.questions.isNotEmpty);
+
+    // qna_page가 30초 미시작 시 보내는 자동 패스.
+    await repo.passQuestion(sid, gen.questions.first.id, reason: 'timeout');
+
+    final ended = await pollUntil((q) => q.status == QnaStatus.ended);
+    expect(ended.endedReason, EndedReason.timeout);
+  });
+
   test('질의응답 마치기 → user_end 종료', () async {
     await repo.generateQna(sid);
     await pollUntil((q) => q.questions.isNotEmpty);

@@ -9,7 +9,7 @@ void main() {
     await player.play('mock://tts/q1');
     expect(player.playedUrls, ['mock://tts/q1']);
 
-    // 다시 듣기 = 같은 URL 재호출
+    // 같은 URL로 재호출 가능(멱등)
     await player.play('mock://tts/q1');
     expect(player.playedUrls.length, 2);
     await player.dispose();

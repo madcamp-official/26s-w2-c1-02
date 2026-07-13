@@ -244,7 +244,7 @@ class MockBackend implements HttpBackend {
     g = _match(path, r'^/sessions/([^/]+)/qna/questions/([^/]+)/answer$');
     if (g != null && m == 'POST') return _submitAnswer(g[0], g[1]);
     g = _match(path, r'^/sessions/([^/]+)/qna/questions/([^/]+)/pass$');
-    if (g != null && m == 'POST') return _passQuestion(g[0], g[1]);
+    if (g != null && m == 'POST') return _passQuestion(g[0], g[1], r);
     g = _match(path, r'^/sessions/([^/]+)/qna/end$');
     if (g != null && m == 'POST') return _endQna(g[0]);
 
@@ -655,7 +655,7 @@ class MockBackend implements HttpBackend {
     });
   }
 
-  BackendResponse _passQuestion(String sessionId, String qid) {
+  BackendResponse _passQuestion(String sessionId, String qid, BackendRequest r) {
     final q = _findQuestion(sessionId, qid);
     if (q == null) return _err(404, 'SESSION_NOT_FOUND', '질문을 찾을 수 없어요.');
     q['answer'] = {
@@ -665,12 +665,16 @@ class MockBackend implements HttpBackend {
       'follow_up_status': 'none',
       'passed': true,
     };
-    _advanceOrEnd(sessionId, qid);
+    // reason=timeout(답변 시작 시간초과) → 마지막 질문이면 ended_reason=timeout.
+    final reason = r.jsonBody?['reason'] as String?;
+    _advanceOrEnd(sessionId, qid,
+        endReason: reason == 'timeout' ? 'timeout' : 'count_reached');
     return _ok(_qna[sessionId]!);
   }
 
-  /// 다음 미답변 질문으로 이동, 없으면 count_reached 종료.
-  void _advanceOrEnd(String sessionId, String fromQid) {
+  /// 다음 미답변 질문으로 이동, 없으면 [endReason]으로 종료.
+  void _advanceOrEnd(String sessionId, String fromQid,
+      {String endReason = 'count_reached'}) {
     final qna = _qna[sessionId];
     if (qna == null) return;
     final list = (qna['questions'] as List<dynamic>).cast<Map<String, dynamic>>();
@@ -683,7 +687,7 @@ class MockBackend implements HttpBackend {
       qna['current_question_id'] = next['id'];
     } else {
       qna['status'] = 'ended';
-      qna['ended_reason'] = 'count_reached';
+      qna['ended_reason'] = endReason;
       qna['current_question_id'] = null;
       _completeSession(sessionId);
     }

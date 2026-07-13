@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:just_audio/just_audio.dart';
 
-/// 질문 TTS 재생 추상화 (api-spec §4.4 — 질문 음성 재생 / 다시 듣기).
+/// 질문 TTS 재생 추상화 (api-spec §4.4 — 질문 음성 1회 재생).
 ///
 /// - 실서버: `question.tts.audio_url`(http) → [JustAudioPlayerService]가 실제 재생.
 /// - Mock 모드: URL이 `mock://…`이라 재생할 실체가 없으므로 **재생 시간을 흉내**만 낸다.
@@ -11,7 +11,7 @@ import 'package:just_audio/just_audio.dart';
 /// [play]는 **재생이 끝나면**(또는 [stop] 호출 시) resolve 되는 Future를 돌려준다.
 /// 호출부는 `await player.play(url)` 후 자동으로 답변 녹음을 시작한다.
 abstract class AudioPlayerService {
-  /// [url]을 끝까지 재생. 완료/중단 시 resolve. 다시 듣기 = 같은 url로 재호출.
+  /// [url]을 끝까지 재생. 완료/중단 시 resolve.
   Future<void> play(String url);
 
   /// 재생 중지 (진행 중인 [play] Future를 즉시 완료시킨다).
