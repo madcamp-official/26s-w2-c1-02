@@ -33,6 +33,13 @@ class SessionRepository {
     return Session.fromJson(json);
   }
 
+  /// draft 발표 옵션 갱신 (PATCH /sessions/{id}, spec §4.1).
+  Future<Session> updateSession(String id, SessionCreateRequest req) async {
+    final json =
+        await _api.patch('/sessions/$id', body: req.toJson()) as Map<String, dynamic>;
+    return Session.fromJson(json);
+  }
+
   Future<void> deleteSession(String id) => _api.delete('/sessions/$id');
 
   // ---- 발표 자료 (PDF) ----

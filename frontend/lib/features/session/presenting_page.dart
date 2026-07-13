@@ -166,8 +166,12 @@ class _PresentingPageState extends State<PresentingPage> {
             _MicState.denied => _MicProblemView(
                 icon: Icons.mic_off,
                 title: '마이크 권한이 필요해요',
-                message: '발표 녹음을 위해 마이크 접근을 허용해주세요.\n브라우저 주소창의 권한 설정을 확인해주세요.',
+                message: '마이크 권한을 허용하지 않으면 실시간 녹음을 사용할 수 없어요.\n'
+                    '권한을 허용하거나, 녹음 파일 업로드로 진행해주세요.',
                 onRetry: () => _startRecording(context.read<RecorderService>()),
+                actionLabel: '녹음 파일 업로드로 전환',
+                onAction: () => context.pushReplacement(
+                    '/sessions/${widget.sessionId}/upload-recording'),
                 onFake: kDebugMode ? () => _startRecording(FakeRecorderService()) : null,
               ),
             _MicState.unsupported => _MicProblemView(
@@ -322,12 +326,14 @@ class _MicProblemView extends StatelessWidget {
               onPressed: onRetry,
               child: const Text('다시 시도'),
             ),
-          if (onAction != null)
+          if (onAction != null) ...[
+            if (onRetry != null) const SizedBox(height: 10),
             FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: AppColors.accent),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
               onPressed: onAction,
               child: Text(actionLabel ?? '계속'),
             ),
+          ],
           if (onFake != null) ...[
             const SizedBox(height: 8),
             TextButton(

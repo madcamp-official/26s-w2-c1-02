@@ -187,6 +187,20 @@ class MockBackend implements HttpBackend {
         return _err(404, 'SESSION_NOT_FOUND', '발표를 찾을 수 없어요.');
       }
       if (m == 'GET') return _ok(ses);
+      if (m == 'PATCH') {
+        // draft 발표 옵션 갱신 (이어하기).
+        final b = r.jsonBody ?? {};
+        for (final k in const [
+          'name',
+          'personas',
+          'question_count',
+          'time_limit_minutes',
+          'mode',
+        ]) {
+          if (b[k] != null) ses[k] = b[k];
+        }
+        return _ok(ses);
+      }
       if (m == 'DELETE') {
         _sessions.remove(g[0]);
         _materials.remove(g[0]);
@@ -420,8 +434,74 @@ class MockBackend implements HttpBackend {
         'error': null,
       };
       _reports[id] = _readyReport();
+      _qna[id] = _seededQnaLog(id);
     }
   }
+
+  /// 완료 세션의 Q&A 로그 시드 (이전 발표 상세의 Q&A 탭 데모용).
+  /// 1차 질문 + 꼬리질문(둘 다 답변) + 패스한 질문을 포함.
+  Map<String, dynamic> _seededQnaLog(String id) => {
+        'status': 'ended',
+        'current_question_id': null,
+        'ended_reason': 'count_reached',
+        'questions': [
+          {
+            'id': 'q_${id}_1',
+            'order': 1,
+            'persona': 'kkondae',
+            'strategy': 'detail_probe',
+            'parent_id': null,
+            'follow_up_depth': 0,
+            'text': '측정 환경이 정확히 뭐였는지 설명해 주시겠어요?',
+            'evidence': {
+              'slides': [3],
+              'transcript_refs': [{'ts': '04:12'}],
+            },
+            'tts': {'status': 'ready', 'audio_url': 'mock://tts/q_${id}_1'},
+            'answer': {
+              'status': 'ready',
+              'text': '사내 A100 서버 1대에서 3회 평균으로 측정했습니다.',
+              'audio_url': 'mock://answer/q_${id}_1',
+              'follow_up_status': 'generated',
+            },
+          },
+          {
+            'id': 'q_${id}_1_f1',
+            'order': 1,
+            'persona': 'kkondae',
+            'strategy': 'detail_probe',
+            'parent_id': 'q_${id}_1',
+            'follow_up_depth': 1,
+            'text': '3회 평균이면 편차는 어느 정도였나요?',
+            'evidence': {'slides': [], 'transcript_refs': []},
+            'tts': {'status': 'ready', 'audio_url': 'mock://tts/q_${id}_1_f1'},
+            'answer': {
+              'status': 'ready',
+              'text': '측정값 편차는 5% 이내였습니다.',
+              'audio_url': 'mock://answer/q_${id}_1_f1',
+              'follow_up_status': 'none',
+            },
+          },
+          {
+            'id': 'q_${id}_2',
+            'order': 2,
+            'persona': 'egen',
+            'strategy': 'big_picture',
+            'parent_id': null,
+            'follow_up_depth': 0,
+            'text': '경쟁 서비스 대비 핵심 차별점은 뭔가요?',
+            'evidence': {'slides': [], 'transcript_refs': []},
+            'tts': {'status': 'ready', 'audio_url': 'mock://tts/q_${id}_2'},
+            'answer': {
+              'status': 'ready',
+              'text': null, // 패스한 질문
+              'audio_url': null,
+              'follow_up_status': 'none',
+              'passed': true,
+            },
+          },
+        ],
+      };
 
   // =====================================================================
   // 비동기 시뮬레이션: material / recording+STT / qna / report

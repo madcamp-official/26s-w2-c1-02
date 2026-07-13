@@ -42,6 +42,15 @@ class SessionController extends ChangeNotifier {
     return session;
   }
 
+  /// "준비 중" draft의 발표 옵션을 갱신(새로 만들지 않음).
+  Future<Session> update(
+      String teamId, String sessionId, SessionCreateRequest req) async {
+    final session = await _repo.updateSession(sessionId, req);
+    _byId[sessionId] = session;
+    await load(teamId);
+    return session;
+  }
+
   /// 세션 상세를 서버에서 새로 읽어 캐시 갱신 (상태 전이 확인용).
   Future<Session> refresh(String sessionId) async {
     final session = await _repo.getSession(sessionId);
