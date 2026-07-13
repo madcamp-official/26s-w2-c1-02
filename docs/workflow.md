@@ -89,10 +89,11 @@
 
 ### 팀원3 (AI Pipeline)
 
-- [ ] 질문 생성 프롬프트: slides+transcript+persona 입력 → `text, persona, strategy, evidence{slides, transcript_refs}` JSON 강제. "슬라이드에 있으나 미언급 / 언급했으나 근거 약함" 타게팅 → 세부 계획·격차: [qna-prompt-workflow.md](ai-pipeline/qna-prompt-workflow.md)
-- [ ] 꼬리질문 프롬프트: 답변 원문(raw STT — 간투사 포함이니 노이즈 견디게) 입력, 깊이 1 제한, "생성 안 함" 판정 포함 → 동상
-  - ✅ 선행 완료(2026-07-13): `services/llm/` 스키마·시그니처를 §4.4에 정렬 — `QuestionDraft`(persona/strategy/evidence) 신설, `generate_questions`에 slides+transcript 입력, 깊이 상수 `3→1`(A11), gemini는 evidence 사후검증까지. 남은 건 프롬프트 튜닝·회귀 검증 (overlay 단계 B·C·D)
-- [ ] TTS 연동: 질문 텍스트 → 페르소나 wav 참조 → mp3/wav 저장, 큐 처리 (`tts_status`)
+- [x] 질문 생성 프롬프트: slides+transcript+persona 입력 → `text, persona, strategy, evidence{slides, transcript_refs}` JSON 강제. "슬라이드에 있으나 미언급 / 언급했으나 근거 약함" 타게팅 → 세부 계획·격차: [qna-prompt-workflow.md](ai-pipeline/qna-prompt-workflow.md)
+- [x] 꼬리질문 프롬프트: 답변 원문(raw STT — 간투사 포함이니 노이즈 견디게) 입력, 깊이 1 제한, "생성 안 함" 판정 포함 → 동상
+  - ✅ 완료(2026-07-13): overlay 단계 A(스키마·시그니처 §4.4 정렬)·B(질문 생성 프롬프트)·C(꼬리질문 프롬프트 + gemini prompt-caching으로 토큰 절약) 구현·커밋. 각 단계 오프라인 검증(persona 라운드로빈·evidence 사후검증·깊이 가드·needed 분기) 통과.
+  - 🔜 남음: overlay 단계 **D(회귀 스냅샷 테스트)** + 팀원2 라우터 합류 검증(`POST /qna/generate`→저장→`GET /qna` 필드 일치)
+- [ ] TTS 연동: 질문 텍스트 → 페르소나 wav 참조 → mp3/wav 저장, 큐 처리 (`tts_status`) — `services/tts.py` 미착수
 
 ### 팀원2 (Backend Core)
 
