@@ -240,6 +240,40 @@ class TestDelete:
         assert not any(storage.exists(k) for k in (mkey, rkey, tts_key, ans_key))
 
 
+class TestLifecycle:
+    """작업 2 통합 — 생성→목록→상세→수정→삭제가 한 흐름으로 이어진다 (capstone)."""
+
+    def test_full_session_lifecycle(self, team_ctx):
+        tid, ids = team_ctx
+        H = _auth("sesr_owner")
+
+        # 1) 생성
+        created = client.post(f"/api/v1/teams/{tid}/sessions",
+                              json=_body(name="발표", question_count=5), headers=H)
+        assert created.status_code == 201
+        sid = created.json()["id"]
+        assert created.json()["status"] == "draft"
+
+        # 2) 목록에 등장
+        listed = client.get(f"/api/v1/teams/{tid}/sessions", headers=H).json()
+        assert any(s["id"] == sid for s in listed)
+
+        # 3) 상세 조회
+        assert client.get(f"/api/v1/sessions/{sid}", headers=H).json()["name"] == "발표"
+
+        # 4) draft에서 수정 → 반영 확인
+        client.patch(f"/api/v1/sessions/{sid}",
+                     json={"name": "발표(수정)", "question_count": 8}, headers=H)
+        after = client.get(f"/api/v1/sessions/{sid}", headers=H).json()
+        assert after["name"] == "발표(수정)" and after["question_count"] == 8
+
+        # 5) 삭제 → 이후 조회 404, 목록에서도 사라짐
+        assert client.delete(f"/api/v1/sessions/{sid}", headers=H).status_code == 204
+        assert client.get(f"/api/v1/sessions/{sid}", headers=H).status_code == 404
+        listed2 = client.get(f"/api/v1/teams/{tid}/sessions", headers=H).json()
+        assert all(s["id"] != sid for s in listed2)
+
+
 class TestDetailDerivation:
     """재검증(2차) — 하위 리소스 파생(slide_count·audio_url) 정확성."""
 
