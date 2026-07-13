@@ -149,15 +149,17 @@ def _generate(client: genai.Client, direction: str, script: str, voice: str) -> 
             return part.data, _pcm_rate(part.mime_type)
         except Exception as e:  # noqa: BLE001 — 429/일시 오류 재시도 후 최종 보고
             last = e
-            if "SERVICE_DISABLED" in str(e):  # 재시도 무의미 — 키/프로젝트 문제
+            # 키/프로젝트 설정 문제는 재시도 무의미 — 즉시 중단하고 안내.
+            if any(x in str(e) for x in ("SERVICE_DISABLED", "BILLING_DISABLED")):
                 break
     hint = ""
-    if "SERVICE_DISABLED" in str(last):
+    if any(x in str(last) for x in ("SERVICE_DISABLED", "BILLING_DISABLED", "PERMISSION_DENIED")):
         hint = (
-            "\n힌트: Vertex express 키(AQ.…)는 TTS 프리뷰 모델을 지원하지 않는다."
-            "\n  해결 1) https://aistudio.google.com 에서 AI Studio 키(AIza…) 발급 →"
-            "\n         GEMINI_API_KEY=AIza… backend/.venv/bin/python <이 스크립트>"
-            "\n  해결 2) 오류 메시지의 activationUrl에서 프로젝트에 aiplatform API 활성화"
+            "\n힌트: Vertex express 키(AQ.…)는 aiplatform TTS를 프로젝트에 aiplatform API"
+            "\n  활성화 + 결제(billing) 연결이 모두 돼야 쓴다(TTS는 무료 티어 없음)."
+            "\n  → 더 간단한 길: https://aistudio.google.com 에서 AI Studio 키(AIza…) 발급"
+            "\n    (프리뷰 TTS 무료 티어 · billing 불필요) 후:"
+            "\n    GEMINI_API_KEY=AIza… backend/.venv/bin/python infra/gpu-server/build_persona_refs_gemini.py"
         )
     raise RuntimeError(f"생성 실패({1 + MAX_RETRIES}회): {last}{hint}") from last
 
