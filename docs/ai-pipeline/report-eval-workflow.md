@@ -128,8 +128,8 @@ generate_report(*, answers, slides, transcript_text) -> ReportDraft
 
 1. ~~**WPM에서 필러 제외?**~~ → **결정(2026-07-13): 제외**(`exclude_fillers=True` 기본). 필러는
    별도 축이라 이중 계산을 피하고 WPM을 "콘텐츠 발화 속도"로 둔다. 같은 사전(`FILLER_WORDS`)이
-   제외·카운트 단일 진실원. `False`로 원문 포함 전환 가능. → **팀원2 후속**: db-schema §3.6
-   `words_per_minute` 주석을 "원문 기준(간투사 포함)" → "콘텐츠 기준(간투사 제외)"으로, §9 항목 해소.
+   제외·카운트 단일 진실원. `False`로 원문 포함 전환 가능. ✅ 문서 정합 완료: db-schema §3.6 주석·
+   §9 항목, api-spec §5.2 노트 모두 "콘텐츠 기준(간투사 제외)"으로 갱신.
 2. **성장 리포트 insight**(§5.2 growth 응답의 `insight`)를 누가 만드나 — 세션 insight와 별개(회차 비교).
    LLM 재사용(type_scores 시계열 입력) vs 템플릿. **스트레치**로 두고 세션 insight 먼저.
 3. **필러 사전 범위** — 지역·말투 편차. 최소 셋으로 시작하고 실측 로그로 확장.
