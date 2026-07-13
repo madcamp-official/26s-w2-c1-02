@@ -221,8 +221,14 @@ def _decide_follow_up_and_advance(db, question: models.Question, answer: models.
         db.commit()
 
 
-def _advance_to_next_primary(db, session: models.RehearsalSession, question: models.Question) -> None:
-    """current를 다음 1차 질문으로. 더 없으면 질의 수 도달로 자동 종료(count_reached)."""
+def _advance_to_next_primary(
+    db, session: models.RehearsalSession, question: models.Question,
+    *, end_reason: EndedReason = EndedReason.count_reached,
+) -> None:
+    """current를 다음 1차 질문으로. 더 없으면 자동 종료.
+
+    종료 사유는 기본 count_reached(질의 수 도달). pass(reason=timeout)로 마지막 질문을
+    넘긴 경우엔 호출자가 timeout을 넘긴다 (A12: 마지막이 시간초과면 timeout)."""
     next_order = question.order_index + 1  # 꼬리질문도 order_index=부모 순번이라 동일 공식
     nxt = db.scalar(
         select(models.Question).where(
@@ -234,7 +240,42 @@ def _advance_to_next_primary(db, session: models.RehearsalSession, question: mod
     if nxt is not None:
         session.current_question_id = nxt.id
     else:
-        end_session(db, session, EndedReason.count_reached)
+        end_session(db, session, end_reason)
+
+
+# ── 작업 4-3. 답변 패스 (동기 — STT 없이 바로 다음) ───────────────────
+
+def record_pass(db, session: models.RehearsalSession, question: models.Question,
+                reason: str) -> None:
+    """질문을 패스한다: passed 답변 기록 + 꼬리질문 생략 + 다음 1차 질문 이동.
+
+    커밋은 이 함수가 한다. 마지막 질문을 reason=timeout으로 넘기면 종료 사유가 timeout,
+    그 외(user 등)는 count_reached (A12). 이전 답변 오디오가 있으면 커밋 후 정리."""
+    answer = db.get(models.Answer, question.id)
+    old_key = answer.audio_storage_key if answer is not None else None
+    if answer is None:
+        answer = models.Answer(
+            question_id=question.id, kind=AnswerKind.passed,
+            status=AnswerStatus.ready, audio_storage_key=None,
+            follow_up_status=FollowUpStatus.none,
+        )
+        db.add(answer)
+    else:  # answered(실패 등) → passed로 덮어쓰기
+        answer.kind = AnswerKind.passed
+        answer.status = AnswerStatus.ready
+        answer.audio_storage_key = None
+        answer.duration_seconds = None
+        answer.text = None
+        answer.follow_up_status = FollowUpStatus.none
+        answer.error_code = None
+        answer.error_message = None
+
+    end_reason = EndedReason.timeout if reason == "timeout" else EndedReason.count_reached
+    _advance_to_next_primary(db, session, question, end_reason=end_reason)
+    db.commit()
+
+    if old_key:  # 패스 전 올렸던 답변 오디오 고아 정리 (best-effort)
+        storage.delete(old_key)
 
 
 # ── 종료 + 리포트 큐 (qna/end·자동 종료 공용) ─────────────────────────
