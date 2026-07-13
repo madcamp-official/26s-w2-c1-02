@@ -7,31 +7,31 @@
       "name": "egen",
       "file": "egen.safetensors",
       "mode": "reference",
-      "ref_audio_feat_len": 66
+      "ref_audio_feat_len": 84
     },
     "teto": {
       "name": "teto",
       "file": "teto.safetensors",
       "mode": "reference",
-      "ref_audio_feat_len": 68
+      "ref_audio_feat_len": 95
     },
     "kkondae": {
       "name": "kkondae",
       "file": "kkondae.safetensors",
       "mode": "reference",
-      "ref_audio_feat_len": 92
+      "ref_audio_feat_len": 77
     },
     "mungcheong": {
       "name": "mungcheong",
       "file": "mungcheong.safetensors",
       "mode": "reference",
-      "ref_audio_feat_len": 71
+      "ref_audio_feat_len": 113
     },
     "jammin": {
       "name": "jammin",
       "file": "jammin.safetensors",
       "mode": "reference",
-      "ref_audio_feat_len": 64
+      "ref_audio_feat_len": 67
     }
   }
 }
