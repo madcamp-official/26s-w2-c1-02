@@ -97,3 +97,62 @@ def require_team_leader(
     if team.leader_id != user.id:
         raise ApiError(403, "FORBIDDEN_NOT_LEADER", "팀장만 할 수 있는 작업이에요.")
     return team
+
+
+# ── 세션 권한 (작업 1, Step 2) ────────────────────────────────────────
+# 세션 = 발표 1회. "멤버"는 세션이 속한 팀의 멤버, "owner"는 발표자(생성자).
+#   - require_session_member          : 세션 팀 멤버가 아니면 404 (존재를 숨김)
+#   - require_session_owner           : owner가 아니면 403 FORBIDDEN_NOT_OWNER (§6.2)
+#   - require_session_owner_or_leader : 삭제용 — owner 또는 팀장 (api-spec §4.1)
+
+
+def load_session_as_member(session_id: str, user: models.User, db: Session) -> models.RehearsalSession:
+    """(순수 헬퍼) 세션을 로드하되, 요청자가 그 세션 팀의 멤버가 아니면 404.
+
+    팀 로더와 같은 규칙 — 비멤버에게 세션 존재를 숨긴다. 트랜잭션 본문에서
+    직접 호출하거나, 아래 require_session_member(Depends)가 감싼다."""
+    session = db.get(models.RehearsalSession, session_id)
+    if session is None:
+        raise ApiError(404, "SESSION_NOT_FOUND", "발표 세션을 찾을 수 없어요.")
+    is_member = db.get(models.TeamMember, (session.team_id, user.id)) is not None
+    if not is_member:
+        raise ApiError(404, "SESSION_NOT_FOUND", "발표 세션을 찾을 수 없어요.")
+    return session
+
+
+def require_session_member(
+    session_id: str,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> models.RehearsalSession:
+    """멤버 가드 (Depends). 경로의 {session_id}로 세션을 로드해 주입한다."""
+    return load_session_as_member(session_id, user, db)
+
+
+def require_session_owner(
+    session: models.RehearsalSession = Depends(require_session_member),
+    user: models.User = Depends(get_current_user),
+) -> models.RehearsalSession:
+    """owner 가드 (Depends). 멤버 가드 위에 발표자 검사를 얹는다.
+
+    멤버지만 발표자(owner)가 아니면 403 FORBIDDEN_NOT_OWNER (§6.2). 세션 설정
+    수정 등 발표자 전용 작업에 사용."""
+    if session.owner_id != user.id:
+        raise ApiError(403, "FORBIDDEN_NOT_OWNER", "발표자만 할 수 있는 작업이에요.")
+    return session
+
+
+def require_session_owner_or_leader(
+    session: models.RehearsalSession = Depends(require_session_member),
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> models.RehearsalSession:
+    """삭제 가드 (Depends). owner 또는 팀장이면 통과 (api-spec §4.1 세션 삭제 권한).
+
+    둘 다 아니면 403 FORBIDDEN_NOT_OWNER."""
+    if session.owner_id == user.id:
+        return session
+    team = db.get(models.Team, session.team_id)
+    if team is not None and team.leader_id == user.id:
+        return session
+    raise ApiError(403, "FORBIDDEN_NOT_OWNER", "발표자 또는 팀장만 삭제할 수 있어요.")
