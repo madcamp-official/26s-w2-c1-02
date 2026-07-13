@@ -61,10 +61,10 @@
 
 ### 팀원2 (Backend Core)
 
-- [ ] `/teams/{id}/sessions` CRUD + 세션 상태머신 (`draft → transcribing → …`, `recording_in_progress` 개명 반영)
-- [ ] `POST /material` 202 → 백그라운드 파싱 잡 → `materials` 갱신 / `retry` / 스캔본 `UNPROCESSABLE_PDF`
-- [ ] `POST /recording` 202 → STT 잡 큐 (STT 서버가 **직렬 처리**이므로 백엔드에 단순 큐 필수 — infra 제약 2)
-- [~] 권한 검사 공통화: 멤버/팀장/owner (`FORBIDDEN_NOT_OWNER` 등) — `deps.py` `require_team_member`·`require_team_leader`(FORBIDDEN_NOT_LEADER) 완료, 세션 owner 가드(`require_session_owner`)는 세션 라우터와 함께 TODO
+- [x] `/teams/{id}/sessions` CRUD + 세션 상태머신 (`draft → transcribing → …`, `recording_in_progress` 개명 반영)
+- [x] `POST /material` 202 → 백그라운드 파싱 잡 → `materials` 갱신 / `retry` / 스캔본 `UNPROCESSABLE_PDF`
+- [x] `POST /recording` 202 → STT 잡 큐 (STT 서버가 **직렬 처리**이므로 백엔드에 단순 큐 필수 — infra 제약 2)
+- [x] 권한 검사 공통화: 멤버/팀장/owner (`FORBIDDEN_NOT_OWNER` 등) — `deps.py` `require_team_member`·`require_team_leader`(FORBIDDEN_NOT_LEADER) 완료, 세션 owner 가드(`require_session_owner`)는 세션 라우터와 함께 TODO
 
 ### 팀원3 (AI Pipeline)
 
