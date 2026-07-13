@@ -50,10 +50,10 @@
 
 ### 팀원3 (AI Pipeline)
 
-- [ ] GPU 서버 셋업: `setup_tts.sh` / `setup_stt.sh` → `test_servers.sh` 왕복 테스트 통과
+- [x] GPU 서버 셋업: `setup_tts.sh` / `setup_stt.sh` → `test_servers.sh` 왕복 테스트 통과 — 두 서버 가동 확인(STT `/transcribe` 실측·TTS 합성 모두 이 서버로 수행, 2026-07-11)
 - [x] 한국어 STT 실측: 5분 오디오 변환 소요시간 기록 (→ 폴링 간격·UX 근거, spec §8) — 실측 완료(2026-07-11): 5분 ~9.7s, RTF≈0.03~0.05. 청크 **60s+4s 겹침** 확정. 표: [infra README](../infra/gpu-server/README.md#stt-실측--청크-크기-결정-day-3-팀원3)
-- [~] VoxCPM2 페르소나 voice design 시작 — 5종(에겐/테토/꼰대/멍청/잼민) 설계 완료([persona_voices.md](../infra/gpu-server/persona_voices.md)): 밈 리서치 + 음색/레퍼런스 스크립트 + 설치법. **차단: VoxCPM2는 지시 불가·레퍼런스 클로닝 전용 → 페르소나별 레퍼런스 wav 필요(미확보). 오디오 확보 방식 결정 대기**
-- [ ] 외부 LLM API 키 발급 + `LLMProvider` 추상화에 실제 제공자 1개 연결 (헬로월드 수준)
+- [x] VoxCPM2 페르소나 voice design — 5종(에겐/테토/꼰대/멍청/잼민) 설계([persona_voices.md](../infra/gpu-server/persona_voices.md)) + **레퍼런스 차단 해소**: `build_persona_voices.sh`가 default 음성 합성 → 피치/템포 변형으로 캐리커처 레퍼런스 자체 생성(외부 자산 0). `voices/refs·profiles·out` 5종 빌드 완료, 사람 레퍼런스 확보 시 refs wav 교체 후 (3)단계만 재실행
+- [x] 외부 LLM API 키 발급 + `LLMProvider` 추상화에 실제 제공자 1개 연결 — Gemini 연결 완료(`services/llm/gemini_provider.py`, 질문 생성·꼬리질문 JSON 스키마 강제까지 구현). `factory.py`에서 `LLM_PROVIDER=mock|gemini` 전환, 키는 `backend/.env`
 
 ---
 
@@ -72,7 +72,9 @@
   - `backend/app/services/material.py` `parse_pdf_to_slides(bytes|경로) → [{"page":1,"text":"..."}]`
   - 스캔본·암호화·50p 초과 → `UnprocessablePdfError`(→ `UNPROCESSABLE_PDF`), 손상 파일 → `PdfParseError`(→ retry)
   - 동기 함수 — 잡에서 `run_in_executor`로 감쌀 것. `PyMuPDF>=1.25.0` requirements 추가됨
-- [ ] STT 클라이언트: **5분 청크 분할 + 타임스탬프 오프셋 합산 병합** (ForcedAligner 제약 — 이 스텝 최난도)
+- [x] STT 클라이언트: **5분 청크 분할 + 타임스탬프 오프셋 합산 병합** (ForcedAligner 제약 — 이 스텝 최난도) → [stt-client-workflow.md](stt-client-workflow.md)
+  - `backend/app/services/stt.py` `transcribe_recording(경로) → [{"start","end","text"}]` (초 float, 문장급)
+  - E2E 실측: 2.7분 발표 전사 5.4s(RTF 0.033), 경계 중복 0, CER 0.96%. 팀원2 합류 검증(7단계)만 남음
 - [ ] `transcripts.segments` JSONB 형식(초 단위 float)으로 저장되는지 팀원2와 함께 검증
 
 ### 팀원1 (Frontend)
