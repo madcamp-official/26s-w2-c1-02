@@ -33,7 +33,7 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Rehearsal.io',
+        title: const Text('말꼬리',
             style: TextStyle(
                 fontWeight: FontWeight.w800, color: AppColors.accent)),
         actions: [

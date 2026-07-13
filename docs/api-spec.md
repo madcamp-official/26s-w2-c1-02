@@ -1,4 +1,4 @@
-# Rehearsal.io — API 명세서 (v0.3)
+# Rehearsal.io — API 명세서 (v0.4-draft)
 
 > LLM 기반 프레젠테이션 질의응답 생성/분석 서비스의 백엔드(FastAPI) ↔ 프론트(Flutter Web/iOS/Android) API 계약.
 > 기능명세서(Google Sheets) + 와이어프레임 28화면(`design/wireframes/`) 기준으로 작성. **이 문서는 "의도된 최종 API" 설계이며, 현재 스캐폴드는 일부만 구현(Mock)되어 있습니다.** (§0.3 참고)
@@ -78,6 +78,17 @@ PDF 업로드 ──(파싱)──▶ slides.json
 | 지연(latency)        | 모델 홉 1개 감소 → transcript `ready` 도달 소폭 빨라짐(A4 폴링 간격 영향 없음)                               |
  
 > **가정:** 질문 생성·리포트 분석 LLM은 v0.2 이전부터 **외부 API**였다고 가정. 만약 이 작업들이 로컬 `Qwen3-4B`에 의존했다면(정제 전용이 아니었다면), 별도의 외부 LLM 이전 결정이 필요하며 이는 위 표의 "영향 없음" 항목을 뒤집습니다 — 팀 확인 요망.
+
+### 0.6 변경 이력 (v0.3 → v0.4-draft) — 실시간 녹음 청크 계약 (⚠️ BE 합의 필요)
+
+README 아키텍처("녹음 중 60초+4초 겹침 청크 전송", STT 실측으로 청크 크기 확정)에 대응하는 API 계약이 spec에 없어 FE(팀원1)가 초안 추가. **BE(팀원2) 합의 후 -draft 제거.**
+
+| 항목 | 변화 |
+|---|---|
+| `POST /recording/chunks` · `/recording/complete` | **신설** (§4.3.1) — 실시간 모드 전용 |
+| `POST /recording` | 파일 모드(d3)·폴백 전용으로 역할 축소 (§4.3) |
+| 파일 형식 | 녹음 산출물에 `webm` 허용 추가 (§1.3) — 웹 폴백 경로용 |
+| 상태 머신·enum | 변경 없음 (`recording_in_progress` 중 청크 수신, `complete` → `transcribing`) |
 > 
 ---
 
@@ -125,9 +136,11 @@ status ∈ { queued, processing, ready, failed }   // 모든 async 리소스 공
 | 종류       | 형식               | 최대             |
 | -------- | ---------------- | -------------- |
 | 발표 자료    | PDF (텍스트 추출 가능본) | 20 MB · 50 페이지 |
-| 발표/답변 녹음 | mp3 · wav · m4a  | 60 분 · 200 MB  |
+| 발표/답변 녹음 | mp3 · wav · m4a · **webm**(v0.4-draft) | 60 분 · 200 MB  |
 
 스캔본/이미지 PDF는 `422 UNPROCESSABLE_PDF`로 거부(기본값; OCR은 후속).
+
+> **webm 추가(v0.4-draft, FE 제안 · BE 합의 필요):** 브라우저 MediaRecorder는 m4a를 만들 수 없어 웹 폴백 녹음의 산출물이 webm/opus. STT는 ffmpeg 디코딩이라 추가 비용 없음. FE 기본 경로는 PCM 스트림 → **wav** 생성이므로 webm은 스트리밍 미지원 브라우저 폴백에서만 발생.
 
 ---
 
@@ -323,11 +336,36 @@ stateDiagram-v2
 | Method | Path                                     | 설명                                                                        |
 | ------ | ---------------------------------------- | ------------------------------------------------------------------------- |
 | POST   | `/sessions/{sessionId}/recording/start`  | (실시간·선택) 녹음 시작 표시 → `status=recording_in_progress`, `started_at`. 이어하기용   |
-| POST   | `/sessions/{sessionId}/recording`        | 녹음 파일 업로드(multipart, 실시간 종료·파일 모드 공용) → **STT 시작**(`202`)                 |
+| POST   | `/sessions/{sessionId}/recording`        | 녹음 파일 업로드(multipart, **파일 모드(d3) 전용**·v0.4에서 실시간 종료 겸용 해제) → **STT 시작**(`202`) |
+| POST   | `/sessions/{sessionId}/recording/chunks` | **(v0.4-draft)** 실시간 녹음 청크 업로드(60초+4초 겹침) → 청크별 STT 잡 큐 적재(`202`)        |
+| POST   | `/sessions/{sessionId}/recording/complete` | **(v0.4-draft)** 실시간 녹음 종료: 재생용 전체 파일 업로드 + 병합 트리거 → `transcribing`(`202`) |
 | GET    | `/sessions/{sessionId}/transcript`       | STT 상태 + 세그먼트                                                             |
 | POST   | `/sessions/{sessionId}/transcript/retry` | STT 재시도                                                                   |
 
 **녹음 업로드(multipart 필드)**: `file`(audio), `started_at`, `ended_at`, `duration_seconds`.
+
+#### 4.3.1 실시간 녹음 청크 파이프라인 (v0.4-draft, FE 제안 · BE 합의 필요)
+
+루트 README "발표 녹음 → STT 청크 파이프라인" 아키텍처(청크 60초+4초 겹침, STT 실측으로 확정)의 API 계약. 발표가 끝나기 전에 전사가 대부분 진행되게 한다.
+
+**`POST /recording/chunks`** — multipart 필드:
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `file` | audio (wav 권장) | 청크 오디오. FE는 PCM 16kHz 모노 스트림을 잘라 wav로 인코딩 |
+| `seq` | int (0-base) | 청크 순번. BE는 순서 보장 직렬 큐에 적재 (infra 제약 2) |
+| `offset_seconds` | float | 녹음 시작 기준 이 청크의 시작 오프셋 (겹침 포함, `max(0, 60·seq − 4)`) |
+| `overlap_seconds` | float | 앞 청크와의 겹침 (첫 청크 0, 이후 4) |
+| `duration_seconds` | float | 이 청크의 길이 |
+
+응답 `202 { "received_seq": n }`. 청크 수신 중 세션 상태는 `recording_in_progress` 유지, `transcript.status = processing`.
+
+**`POST /recording/complete`** — multipart 필드: `file`(재생용 전체 오디오), `total_chunks`, `started_at`, `ended_at`, `duration_seconds`.
+응답 `202`. BE는 누락 청크 검증(수신 seq ⊂ 0..total_chunks−1) 후 병합(오프셋 보정 + 겹침 이음새 처리, 팀원3 담당)을 마무리하고 세션을 `transcribing` → 완료 시 `transcript.ready`로 전이.
+
+- **답변 오디오는 청크 없이** 기존 단발 업로드(§4.4) 유지 (짧아서 불필요, README 불변 조건).
+- 청크 일부 유실 시: `complete`의 전체 파일이 원본이므로 BE가 누락 구간만 재전사 가능 (폴백 안전망).
+- 스트리밍 미지원 클라이언트(구형 브라우저)는 청크 없이 `POST /recording` 단발 경로 사용 가능(파일 모드와 동일 처리).
 
 **GET transcript 응답** (D: `ready`)
 

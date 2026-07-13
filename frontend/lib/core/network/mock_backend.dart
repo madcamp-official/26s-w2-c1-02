@@ -220,6 +220,10 @@ class MockBackend implements HttpBackend {
       _sessions[g[0]]?['status'] = 'recording_in_progress';
       return const BackendResponse(statusCode: 202, json: {'status': 'recording_in_progress'});
     }
+    g = _match(path, r'^/sessions/([^/]+)/recording/chunks$');
+    if (g != null && m == 'POST') return _receiveChunk(g[0], r);
+    g = _match(path, r'^/sessions/([^/]+)/recording/complete$');
+    if (g != null && m == 'POST') return _completeRecording(g[0], r);
     g = _match(path, r'^/sessions/([^/]+)/recording$');
     if (g != null && m == 'POST') return _uploadRecording(g[0], r);
     g = _match(path, r'^/sessions/([^/]+)/transcript$');
@@ -456,6 +460,41 @@ class MockBackend implements HttpBackend {
     return const BackendResponse(statusCode: 202, json: {'status': 'queued'});
   }
 
+  /// sessionId → 수신한 청크 seq 목록 (spec §4.3.1 v0.4-draft).
+  final Map<String, List<int>> _receivedChunks = {};
+
+  /// 청크 수신: 세션은 recording_in_progress 유지, transcript는 processing.
+  BackendResponse _receiveChunk(String sessionId, BackendRequest r) {
+    final ses = _sessions[sessionId];
+    if (ses == null) return _err(404, 'SESSION_NOT_FOUND', '발표를 찾을 수 없어요.');
+
+    final seq = int.tryParse(r.multipart?.fields['seq'] ?? '') ?? -1;
+    if (seq < 0) return _err(400, 'VALIDATION', 'seq 필드가 필요해요.');
+
+    (_receivedChunks[sessionId] ??= []).add(seq);
+    _transcripts[sessionId] ??= {'status': 'processing', 'segments': [], 'error': null};
+    ses['transcript'] = {'status': 'processing'};
+
+    return BackendResponse(statusCode: 202, json: {'received_seq': seq});
+  }
+
+  /// 실시간 녹음 종료: 누락 청크 검증 + 전체 파일 저장 + 병합 → transcribing.
+  BackendResponse _completeRecording(String sessionId, BackendRequest r) {
+    final ses = _sessions[sessionId];
+    if (ses == null) return _err(404, 'SESSION_NOT_FOUND', '발표를 찾을 수 없어요.');
+
+    final total =
+        int.tryParse(r.multipart?.fields['total_chunks'] ?? '') ?? 0;
+    final received = (_receivedChunks[sessionId] ?? []).toSet();
+    final missing = [for (var i = 0; i < total; i++) if (!received.contains(i)) i];
+    if (missing.isNotEmpty) {
+      // 폴백 안전망: 전체 파일이 있으므로 경고만 남기고 진행 (spec §4.3.1)
+      // (실서버는 누락 구간만 전체 파일에서 재전사)
+    }
+
+    return _uploadRecording(sessionId, r); // 이후 흐름은 단발 업로드와 동일
+  }
+
   BackendResponse _uploadRecording(String sessionId, BackendRequest r) {
     final ses = _sessions[sessionId];
     if (ses == null) return _err(404, 'SESSION_NOT_FOUND', '발표를 찾을 수 없어요.');
@@ -464,7 +503,9 @@ class MockBackend implements HttpBackend {
     ses['recording'] = {
       'status': 'ready',
       'duration_seconds':
-          int.tryParse(r.multipart?.fields['duration_seconds'] ?? '') ?? 300,
+          (double.tryParse(r.multipart?.fields['duration_seconds'] ?? '') ??
+                  300)
+              .round(),
       'audio_url': 'mock://rec/$sessionId',
     };
     _transcripts[sessionId] = {'status': 'processing', 'segments': [], 'error': null};

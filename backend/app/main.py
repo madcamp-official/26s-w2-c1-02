@@ -1,13 +1,20 @@
 from fastapi import Depends, FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api.routes import auth, speeches, teams
+from app.api.routes import auth, invites, speeches, teams
 from app.core.config import settings
+from app.core.errors import ApiError, api_error_handler, validation_error_handler
 from app.db.session import get_db
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
+
+# api-spec §1.1 에러 포맷: 라우터가 raise ApiError(...) 하면 여기서 JSON으로 변환
+app.add_exception_handler(ApiError, api_error_handler)
+# Pydantic 검증 실패(422)도 같은 포맷으로 (code=VALIDATION_ERROR)
+app.add_exception_handler(RequestValidationError, validation_error_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,9 +25,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth.router)
-app.include_router(teams.router)
-app.include_router(speeches.router)
+# api-spec §1: Base URL = /api/v1 (refresh 쿠키의 Path=/api/v1/auth도 여기에 의존)
+API_V1 = "/api/v1"
+app.include_router(auth.router, prefix=API_V1)
+app.include_router(teams.router, prefix=API_V1)
+app.include_router(invites.router, prefix=API_V1)        # /teams/{id}/invites*
+app.include_router(invites.token_router, prefix=API_V1)  # /invites/{token}*
+app.include_router(speeches.router, prefix=API_V1)
 
 
 @app.get("/health", tags=["meta"])

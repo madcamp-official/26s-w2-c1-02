@@ -42,9 +42,9 @@
 
 ### 팀원2 (Backend Core)
 
-- [ ] PostgreSQL 16 기동 + db-schema DDL 전체 적용 (ENUM 12종, 테이블 16개, 트리거)
-- [ ] SQLAlchemy(또는 선택 ORM) 모델 + prefix ID 생성기 (`usr_` + base62)
-- [ ] `/auth/signup·login·refresh·logout·me` — JWT + refresh 해시 저장, Web=httpOnly 쿠키 / Native=본문 분기
+- [x] PostgreSQL 16 기동 + db-schema DDL 전체 적용 (ENUM 12종, 테이블 16개, 트리거)
+- [x] SQLAlchemy(또는 선택 ORM) 모델 + prefix ID 생성기 (`usr_` + base62)
+- [x] `/auth/signup·login·refresh·logout·me` — JWT + refresh 해시 저장, Web=httpOnly 쿠키 / Native=본문 분기
 - [ ] `/teams`, `/teams/{id}/members·leave`, 초대(이메일은 발송 없이 토큰만이라도), 팀장 승계 트랜잭션 (db-schema §7.2)
 - [ ] 파일 스토리지 결정(로컬 디스크 + 서명 URL 흉내도 가능) — `storage_key` 규약 확정
 
