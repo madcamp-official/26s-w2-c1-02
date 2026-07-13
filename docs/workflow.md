@@ -72,7 +72,7 @@
   - `backend/app/services/material.py` `parse_pdf_to_slides(bytes|경로) → [{"page":1,"text":"..."}]`
   - 스캔본·암호화·50p 초과 → `UnprocessablePdfError`(→ `UNPROCESSABLE_PDF`), 손상 파일 → `PdfParseError`(→ retry)
   - 동기 함수 — 잡에서 `run_in_executor`로 감쌀 것. `PyMuPDF>=1.25.0` requirements 추가됨
-- [x] STT 클라이언트: **5분 청크 분할 + 타임스탬프 오프셋 합산 병합** (ForcedAligner 제약 — 이 스텝 최난도) → [stt-client-workflow.md](stt-client-workflow.md)
+- [x] STT 클라이언트: **5분 청크 분할 + 타임스탬프 오프셋 합산 병합** (ForcedAligner 제약 — 이 스텝 최난도) → [stt-client-workflow.md](ai-pipeline/stt-client-workflow.md)
   - `backend/app/services/stt.py` `transcribe_recording(경로) → [{"start","end","text"}]` (초 float, 문장급)
   - E2E 실측: 2.7분 발표 전사 5.4s(RTF 0.033), 경계 중복 0, CER 0.96%. 팀원2 합류 검증(7단계)만 남음
 - [ ] `transcripts.segments` JSONB 형식(초 단위 float)으로 저장되는지 팀원2와 함께 검증
@@ -89,8 +89,9 @@
 
 ### 팀원3 (AI Pipeline)
 
-- [ ] 질문 생성 프롬프트: slides+transcript+persona 입력 → `text, persona, strategy, evidence{slides, transcript_refs}` JSON 강제. "슬라이드에 있으나 미언급 / 언급했으나 근거 약함" 타게팅
-- [ ] 꼬리질문 프롬프트: 답변 원문(raw STT — 간투사 포함이니 노이즈 견디게) 입력, 깊이 1 제한, "생성 안 함" 판정 포함
+- [ ] 질문 생성 프롬프트: slides+transcript+persona 입력 → `text, persona, strategy, evidence{slides, transcript_refs}` JSON 강제. "슬라이드에 있으나 미언급 / 언급했으나 근거 약함" 타게팅 → 세부 계획·격차: [qna-prompt-workflow.md](ai-pipeline/qna-prompt-workflow.md)
+- [ ] 꼬리질문 프롬프트: 답변 원문(raw STT — 간투사 포함이니 노이즈 견디게) 입력, 깊이 1 제한, "생성 안 함" 판정 포함 → 동상
+  - ⚠️ 선행: 현 `services/llm/`(Step 1 헬로월드)는 스키마·시그니처가 §4.4와 어긋남 — transcript 입력·persona/strategy/evidence 출력 확장 + 꼬리 깊이 상수(`3`→`1`) 수정이 프롬프트보다 먼저 (overlay 격차표)
 - [ ] TTS 연동: 질문 텍스트 → 페르소나 wav 참조 → mp3/wav 저장, 큐 처리 (`tts_status`)
 
 ### 팀원2 (Backend Core)

@@ -1,6 +1,6 @@
 # STT 클라이언트 미니 워크플로우 — 청크 분할 + 타임스탬프 병합
 
-> [workflow.md](workflow.md) Step 2 팀원3 항목 "STT 클라이언트(최난도)"의 세부 계획.
+> [workflow.md](../workflow.md) Step 2 팀원3 항목 "STT 클라이언트(최난도)"의 세부 계획.
 > 작성일: 2026-07-11 · 담당: 팀원3
 
 ## 계약 (입출력)
@@ -18,7 +18,7 @@ def transcribe_recording(audio_path: str | Path, *, language: str = "ko") -> lis
 
 ## 청크 파라미터 — Day 3 결정 재검토 (재실측 불필요)
 
-Day 3 실측(README [STT 실측 표](../infra/gpu-server/README.md#stt-실측--청크-크기-결정-day-3-팀원3)): RTF≈0.03~0.05, 60s→2.1s, 300s→9.7s.
+Day 3 실측(README [STT 실측 표](../../infra/gpu-server/README.md#stt-실측--청크-크기-결정-day-3-팀원3)): RTF≈0.03~0.05, 60s→2.1s, 300s→9.7s.
 
 재검토 사유: A8(클라이언트 로컬 녹음 → **종료 후 일괄 업로드**)이라 "청크 주기 진행률" 근거가 약해짐. 대안인 **300s 청크**(경계 12개/60분, 병합 부담 ↓)와 비교:
 
