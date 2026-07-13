@@ -44,6 +44,20 @@ class AuthController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) =>
+      _repo.changePassword(
+          currentPassword: currentPassword, newPassword: newPassword);
+
+  /// 회원 탈퇴(익명화, db-schema §7.1). 성공 시 로그아웃 상태로 전환.
+  Future<void> deleteAccount() async {
+    await _repo.deleteAccount();
+    _user = null;
+    notifyListeners();
+  }
+
   /// 인터셉터가 세션 만료를 통지했을 때 (재로그인 유도).
   void handleAuthExpired() {
     if (_user == null) return;

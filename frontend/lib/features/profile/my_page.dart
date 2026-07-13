@@ -111,8 +111,15 @@ class MyPage extends StatelessWidget {
       ),
     );
     if (ok == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('탈퇴 API 연동은 Step 4에서 (DELETE /users/me)')));
+      try {
+        await context.read<AuthController>().deleteAccount();
+        if (context.mounted) context.go('/login');
+      } catch (_) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('탈퇴에 실패했어요. 잠시 후 다시 시도해주세요.')));
+        }
+      }
     }
   }
 }

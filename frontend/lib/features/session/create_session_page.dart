@@ -19,8 +19,12 @@ import '../common/responsive_page.dart';
 /// 진행 방식을 먼저 고르면 나머지 설정(질문자 성격·질문 개수·[제한시간])이
 /// fade-slide-in으로 나타난다. 실제 PDF 업로드(20MB/50p 검증, spec §1.3).
 class CreateSessionPage extends StatefulWidget {
-  const CreateSessionPage({super.key, required this.teamId});
+  const CreateSessionPage({super.key, required this.teamId, this.sessionId});
   final String teamId;
+
+  /// null이면 새 발표 생성. 값이 있으면 해당 "준비 중"(draft) 발표를 이어서
+  /// 편집 — 저장해둔 옵션을 그대로 프리필하고, 시작 시 새로 만들지 않고 갱신한다.
+  final String? sessionId;
 
   @override
   State<CreateSessionPage> createState() => _CreateSessionPageState();
@@ -37,6 +41,34 @@ class _CreateSessionPageState extends State<CreateSessionPage> {
   SessionMode? _mode;
   PlatformFile? _pdf; // 선택된 발표 자료 (bytes 포함)
   bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final id = widget.sessionId;
+    if (id == null) return;
+    // 이어하기: 캐시된 세션이 있으면 즉시 프리필, 없으면 서버에서 불러와 프리필.
+    final cached = context.read<SessionController>().byId(id);
+    if (cached != null) {
+      _applySession(cached);
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final s = await context.read<SessionController>().refresh(id);
+        if (mounted) setState(() => _applySession(s));
+      });
+    }
+  }
+
+  /// draft에 저장돼 있던 발표 옵션을 폼에 채운다.
+  void _applySession(Session s) {
+    _nameController.text = s.name;
+    _countController.text = '${s.questionCount}';
+    _durationController.text = '${s.timeLimitMinutes}';
+    _personas
+      ..clear()
+      ..addAll(s.personas);
+    _mode = s.mode; // 설정 섹션이 바로 보이도록
+  }
 
   Future<void> _pickPdf() async {
     final result = await FilePicker.platform.pickFiles(
@@ -86,16 +118,19 @@ class _CreateSessionPageState extends State<CreateSessionPage> {
 
     setState(() => _submitting = true);
     try {
-      final session = await context.read<SessionController>().create(
-            widget.teamId,
-            SessionCreateRequest(
-              name: name,
-              personas: _personas.toList(),
-              questionCount: count,
-              timeLimitMinutes: minutes,
-              mode: mode,
-            ),
-          );
+      final req = SessionCreateRequest(
+        name: name,
+        personas: _personas.toList(),
+        questionCount: count,
+        timeLimitMinutes: minutes,
+        mode: mode,
+      );
+      final ctrl = context.read<SessionController>();
+      final id = widget.sessionId;
+      // 이어하기면 기존 draft를 갱신(PATCH), 아니면 새로 생성.
+      final session = id == null
+          ? await ctrl.create(widget.teamId, req)
+          : await ctrl.update(widget.teamId, id, req);
 
       final pdf = _pdf;
       if (pdf != null && mounted) {
