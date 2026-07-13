@@ -187,6 +187,20 @@ class MockBackend implements HttpBackend {
         return _err(404, 'SESSION_NOT_FOUND', '발표를 찾을 수 없어요.');
       }
       if (m == 'GET') return _ok(ses);
+      if (m == 'PATCH') {
+        // draft 발표 옵션 갱신 (이어하기).
+        final b = r.jsonBody ?? {};
+        for (final k in const [
+          'name',
+          'personas',
+          'question_count',
+          'time_limit_minutes',
+          'mode',
+        ]) {
+          if (b[k] != null) ses[k] = b[k];
+        }
+        return _ok(ses);
+      }
       if (m == 'DELETE') {
         _sessions.remove(g[0]);
         _materials.remove(g[0]);

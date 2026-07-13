@@ -86,6 +86,14 @@ class AppRouter {
         builder: (_, s) =>
             CreateSessionPage(teamId: s.pathParameters['teamId']!),
       ),
+      // "준비 중"(draft) 발표 이어하기 — 저장된 옵션 프리필
+      GoRoute(
+        path: '/teams/:teamId/sessions/:sessionId/edit',
+        builder: (_, s) => CreateSessionPage(
+          teamId: s.pathParameters['teamId']!,
+          sessionId: s.pathParameters['sessionId']!,
+        ),
+      ),
       GoRoute(
         path: '/sessions/:sessionId/material',
         builder: (_, s) =>

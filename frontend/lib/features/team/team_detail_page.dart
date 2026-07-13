@@ -197,7 +197,8 @@ class _SessionCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           onTap: () => done
               ? context.push('/sessions/${session.id}')
-              : context.push('/teams/${session.teamId}/sessions/new'),
+              : context.push(
+                  '/teams/${session.teamId}/sessions/${session.id}/edit'),
           child: Container(
             width: double.infinity,
             padding: const EdgeInsets.all(18),
