@@ -122,6 +122,9 @@ def leave_team(
     - 팀장 + 후임 있음: 최고참(joined_at→user_id) 승계 후 내 멤버십 삭제
     - 팀장 + 마지막 1인: 팀 삭제 (세션·멤버십·초대 CASCADE)
     """
+    # 같은 팀의 나가기/내보내기를 직렬화 — 팀 행에 잠금(FOR UPDATE)을 걸고 리더를 새로 읽는다.
+    # 없으면 '리더 나가기(승계)'와 '다른 멤버 나가기'가 겹칠 때 커밋 시점 FK 위반(500)이 난다.
+    db.refresh(team, with_for_update=True)
     membership = db.get(models.TeamMember, (team.id, user.id))  # 멤버임은 가드가 보장
 
     if team.leader_id != user.id:
@@ -164,6 +167,7 @@ def remove_member(
 ) -> None:
     """팀원 내보내기(팀장 전용). 팀장 자신은 내보낼 수 없다 —
     '팀장 ∈ 멤버' DEFERRABLE FK를 깨므로. 팀을 뜨려면 /leave(위임 후)로."""
+    db.refresh(team, with_for_update=True)  # leave와 동일 잠금 — 승계 레이스 직렬화
     if user_id == team.leader_id:
         raise ApiError(400, "CANNOT_REMOVE_LEADER",
                        "팀장은 내보낼 수 없어요. 팀을 나가려면 팀 나가기로 위임하세요.")
