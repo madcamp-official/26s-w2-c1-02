@@ -89,6 +89,10 @@ generate_report(*, answers, slides, transcript_text) -> ReportDraft
 
 ## C. 회귀 테스트 — 고정 입력 1세트
 
+> ✅ **구현됨(2026-07-13):** [tests/fixtures/report_sample_session.json](../../backend/tests/fixtures/report_sample_session.json)
+> (실시간 추천 시스템 샘플) + [tests/test_report_fixture.py](../../backend/tests/test_report_fixture.py) 3케이스.
+> A 스냅샷 완전 일치(WPM 84.0·필러 음2/어2), B mock 완전 일치 + 실 프로바이더용 구조/범위 계약. 통과.
+
 프롬프트를 만지면 채점이 흔들린다. **샘플 세션 1개**(slides + transcript + Q&A 로그)를 픽스처로 박제한다.
 
 - `tests/fixtures/report_sample_session.json` — 결정론 입력.
@@ -108,7 +112,7 @@ generate_report(*, answers, slides, transcript_text) -> ReportDraft
 | 1 | ~~정량 서비스 없음~~ | ✅ `compute_speaking_metrics()` (§A) | — |
 | 2 | ~~LLM 리포트 메서드 없음~~ | ✅ `generate_report()` base·gemini·mock | — |
 | 3 | ~~ReportDraft 스키마 없음~~ | ✅ `ReportDraft{type_scores, insight}` + 클램프 검증기 | — |
-| 4 | **회귀 픽스처(§C)** | 단위 스냅샷은 있음(mock 결정론) | 실 세션 1개 고정 JSON(slides+transcript+Q&A)로 A+B 통합 스냅샷 |
+| 4 | ~~회귀 픽스처(§C)~~ | ✅ `report_sample_session.json` + `test_report_fixture.py`(A+B 통합) | — |
 | 5 | ~~필러 사전 미정~~ | ✅ `FILLER_WORDS`(보수적 기본) | 확장은 열린 질문 3 |
 
 ---
