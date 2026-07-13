@@ -4,9 +4,10 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/account_recovery_page.dart';
 import '../../features/auth/login_page.dart';
 import '../../features/auth/signup_page.dart';
-import '../../features/common/placeholder_page.dart';
 import '../../features/home/home_page.dart';
+import '../../features/profile/change_password_page.dart';
 import '../../features/profile/my_page.dart';
+import '../../features/report/growth_report_page.dart';
 import '../../features/session/create_session_page.dart';
 import '../../features/session/material_status_page.dart';
 import '../../features/session/presenting_page.dart';
@@ -14,6 +15,7 @@ import '../../features/session/processing_page.dart';
 import '../../features/session/qna_complete_page.dart';
 import '../../features/session/qna_confirm_page.dart';
 import '../../features/session/qna_page.dart';
+import '../../features/session/session_detail_page.dart';
 import '../../features/session/upload_recording_page.dart';
 import '../../features/team/create_team_page.dart';
 import '../../features/team/invite_accept_page.dart';
@@ -59,21 +61,12 @@ class AppRouter {
       GoRoute(path: '/me', builder: (_, _) => const MyPage()),
       GoRoute(
         path: '/me/password',
-        builder: (_, _) => const PlaceholderPage(
-          title: '비밀번호 변경',
-          wireframe: '09 마이페이지 (i2)',
-          plannedStep: 'Step 4 (Day 6)',
-        ),
+        builder: (_, _) => const ChangePasswordPage(),
       ),
       // ---- 08 분석 (성장 리포트) ----
       GoRoute(
         path: '/me/growth',
-        builder: (_, _) => const PlaceholderPage(
-          title: '성장 리포트',
-          wireframe: '08 분석 (h2)',
-          plannedStep: 'Step 4 (Day 6)',
-          description: 'GET /users/me/report/growth — 회차별 type_scores 비교',
-        ),
+        builder: (_, _) => const GrowthReportPage(),
       ),
 
       // ---- 03 팀 ----
@@ -135,13 +128,8 @@ class AppRouter {
       // ---- 07 이전 발표 (상세: 스크립트/Q&A/리포트 탭) ----
       GoRoute(
         path: '/sessions/:sessionId',
-        builder: (_, s) => PlaceholderPage(
-          title: '발표 상세',
-          wireframe: '07 이전 발표 (g1·g2) + 08 리포트 (h1) 탭',
-          plannedStep: 'Step 4 (Day 6)',
-          description: '세션 ${s.pathParameters['sessionId']} — '
-              'transcript / qna / report 탭',
-        ),
+        builder: (_, s) =>
+            SessionDetailPage(sessionId: s.pathParameters['sessionId']!),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(
