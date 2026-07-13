@@ -91,7 +91,7 @@
 
 - [ ] 질문 생성 프롬프트: slides+transcript+persona 입력 → `text, persona, strategy, evidence{slides, transcript_refs}` JSON 강제. "슬라이드에 있으나 미언급 / 언급했으나 근거 약함" 타게팅 → 세부 계획·격차: [qna-prompt-workflow.md](ai-pipeline/qna-prompt-workflow.md)
 - [ ] 꼬리질문 프롬프트: 답변 원문(raw STT — 간투사 포함이니 노이즈 견디게) 입력, 깊이 1 제한, "생성 안 함" 판정 포함 → 동상
-  - ⚠️ 선행: 현 `services/llm/`(Step 1 헬로월드)는 스키마·시그니처가 §4.4와 어긋남 — transcript 입력·persona/strategy/evidence 출력 확장 + 꼬리 깊이 상수(`3`→`1`) 수정이 프롬프트보다 먼저 (overlay 격차표)
+  - ✅ 선행 완료(2026-07-13): `services/llm/` 스키마·시그니처를 §4.4에 정렬 — `QuestionDraft`(persona/strategy/evidence) 신설, `generate_questions`에 slides+transcript 입력, 깊이 상수 `3→1`(A11), gemini는 evidence 사후검증까지. 남은 건 프롬프트 튜닝·회귀 검증 (overlay 단계 B·C·D)
 - [ ] TTS 연동: 질문 텍스트 → 페르소나 wav 참조 → mp3/wav 저장, 큐 처리 (`tts_status`)
 
 ### 팀원2 (Backend Core)

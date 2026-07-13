@@ -52,15 +52,20 @@
 
 ## 작업 단계
 
-### A. 스키마·시그니처 확장 (프롬프트 전 선행)
+### A. 스키마·시그니처 확장 (프롬프트 전 선행) — ✅ 완료 (2026-07-13)
 
-- [ ] `schemas/qna.py`: 질문 초안 스키마 신설 — `QuestionDraft{ text, persona, strategy, evidence }`,
+- [x] `schemas/qna.py`: 질문 초안 스키마 신설 — `QuestionDraft{ text, persona, strategy, evidence, follow_up_depth }`,
   `Evidence{ slides: list[int], transcript_refs: list[TranscriptRef] }`, `TranscriptRef{ start: float }`.
-  (팀원2가 `id/order_index/tts_status`를 붙여 questions 행으로 저장)
-- [ ] `base.py`·양쪽 provider 시그니처 교체: `generate_questions(*, speech_name, slides, transcript, personas, count)`,
-  `follow_up(*, question, answer, depth)`. `_MAX_FOLLOW_UP_DEPTH = 1`로 수정.
-- [ ] `mock_provider.py`도 새 스키마로 — persona 순환·strategy 순환·evidence 더미(첫 슬라이드)로 채워
+  (팀원2가 `id/order_index/tts_status`를 붙여 questions 행으로 저장. 기존 `QnaItem`은 레거시용 유지)
+- [x] `base.py`·양쪽 provider 시그니처 교체: `generate_questions(*, speech_name, slides, transcript, personas, count)`,
+  `follow_up(*, question, answer, depth)`. 깊이 상수는 `base.MAX_FOLLOW_UP_DEPTH = 1`로 통일(격차 6 해소).
+- [x] `mock_provider.py`도 새 스키마로 — persona 라운드로빈·strategy 순환·evidence 더미(첫 슬라이드/전사)로 채워
   FE/BE가 mock으로 전체 형태를 받게 유지(공통 가이드 2).
+- [x] `gemini_provider.py`: 새 시그니처 + slides(page 번호)·transcript(ts) 주입 프롬프트, `response_schema`로
+  persona/strategy/evidence 강제, **evidence 사후검증**(범위 밖 page·ts 제거)·persona 라운드로빈 교정까지 구현.
+  → B의 프롬프트·evidence 검증 상당 부분이 여기서 선행 완료됨.
+- [x] 레거시 `routes/speeches.py` 어댑터(AudienceType→persona)로 앱 빌드 유지. 오프라인 검증: mock 계약·깊이
+  가드·evidence 사후검증·프롬프트 포맷 통과, 앱 import·251 테스트 수집 정상.
 
 ### B. 질문 생성 프롬프트
 
