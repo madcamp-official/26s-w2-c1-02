@@ -13,12 +13,13 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_session_owner
+from app.api.deps import require_session_member, require_session_owner
 from app.core import storage
 from app.core.errors import ApiError
 from app.db import models
 from app.db.enums import AsyncStatus
 from app.db.session import SessionLocal, get_db
+from app.schemas.session import ErrorInfo, MaterialDetail
 from app.services.material import (
     PdfParseError,
     UnprocessablePdfError,
@@ -118,3 +119,63 @@ def upload_material(
 
     background.add_task(_run_parse, session.id)
     return {"status": AsyncStatus.queued.value}
+
+
+def _require_material(session_id: str, db: Session) -> models.Material:
+    material = db.get(models.Material, session_id)
+    if material is None:
+        raise ApiError(404, "MATERIAL_NOT_FOUND", "업로드된 자료가 없어요.")
+    return material
+
+
+@router.get("/sessions/{session_id}/material", response_model=MaterialDetail)
+def get_material(
+    session: models.RehearsalSession = Depends(require_session_member),
+    db: Session = Depends(get_db),
+) -> MaterialDetail:
+    """자료 파싱 상태 + 슬라이드 (멤버). 폴링으로 queued→processing→ready|failed 확인."""
+    material = _require_material(session.id, db)
+    error = None
+    if material.error_code:
+        error = ErrorInfo(code=material.error_code, message=material.error_message or "")
+    return MaterialDetail(
+        status=material.status, progress=material.progress,
+        file_name=material.file_name, page_count=material.page_count,
+        slides=material.slides, error=error,
+    )
+
+
+@router.post("/sessions/{session_id}/material/retry", status_code=202)
+def retry_material(
+    background: BackgroundTasks,
+    session: models.RehearsalSession = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """파싱 재시도 (owner). 실패한 자료를 queued로 되돌리고 잡 재등록.
+
+    파일은 storage에 남아 있으므로 재파싱만 하면 된다. failed일 때만 의미가 있어
+    ready/processing 중 재시도는 409로 막는다 (중복 잡 방지)."""
+    material = _require_material(session.id, db)
+    if material.status not in (AsyncStatus.failed,):
+        raise ApiError(409, "MATERIAL_NOT_RETRYABLE",
+                       "실패한 자료만 다시 시도할 수 있어요.")
+    material.status = AsyncStatus.queued
+    material.progress = 0.0
+    material.error_code = None
+    material.error_message = None
+    db.commit()
+    background.add_task(_run_parse, session.id)
+    return {"status": AsyncStatus.queued.value}
+
+
+@router.delete("/sessions/{session_id}/material", status_code=204)
+def delete_material(
+    session: models.RehearsalSession = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+) -> None:
+    """자료 삭제 (owner). 자료 없이도 발표 진행 가능. storage 파일도 제거."""
+    material = _require_material(session.id, db)
+    key = material.storage_key
+    db.delete(material)
+    db.commit()
+    storage.delete(key)
