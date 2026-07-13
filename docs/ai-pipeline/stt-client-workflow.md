@@ -39,7 +39,7 @@ Day 3 실측(README [STT 실측 표](../../infra/gpu-server/README.md#stt-실측
 - [x] **4. 오프셋 합산** — 각 세그먼트 `start/end += i·60` (**64가 아님** — 겹침은 stride에 안 들어감)
 - [x] **5. 겹침 병합(dedup)** — 규칙: 경계 `b = (i+1)·60`에 대해 절단점 `cut = b + 2`(겹침 4s의 중앙). 앞 청크는 중점 `< cut`, 뒤 청크는 `≥ cut`인 것만 채택. **단어(형태소) 단위로 dedup 후 그룹화** (아래 발견 사항)
 - [x] **6. E2E 검증** — TTS 합성 2.7분 한국어 발표(39문장, 경계 2개) 실측(2026-07-11): 전사 5.4s(RTF 0.033), 세그먼트 27개(문장급), 경계 중복/탈락 0, **CER 0.96%**(표기 정규화 제외) — Day 3 기준선(0.8%)과 일치
-- [ ] **7. 팀원2 합류 검증** — JSONB 저장 왕복 + `ts` 변환 확인 (workflow Step 2 세 번째 항목과 동일 세션에서). **테스트 준비됨**: `tests/test_transcript_roundtrip.py` — `ts` 변환 7개 통과, JSONB 왕복 2개는 dev DB에서 실행만 하면 됨. 라우터는 `services/stt.py`의 `seconds_to_ts()` import해서 사용
+- [~] **7. 팀원2 합류 검증** — **저장 왕복은 라이브**: 녹음 업로드(`routes/recordings.py`)→직렬 큐(`services/stt_queue.py`)가 `transcribe_recording` 결과를 `transcripts.segments` JSONB(초 float)로 적재(커밋 707797e). `tests/test_transcript_roundtrip.py`의 `ts` 변환 7개 통과. **남은 것**: `ts:"MM:SS"` 변환을 클라이언트에 노출하는 라우터 연결 — 현재 `GET /sessions/{id}`는 `transcript.status`만 반환하고, `seconds_to_ts()`는 아직 어떤 라우터에서도 import되지 않음(스크립트 뷰 07-history에서 세그먼트 노출 시 연결 필요)
 
 ## 구현 중 발견 사항 (설계 반영됨)
 

@@ -31,8 +31,10 @@ from fastapi import FastAPI, File, Form, UploadFile
 
 HOST = os.environ.get("STT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("STT_PORT", "8200"))
-# 24GB 기준 25% ≈ 6GB (Aligner는 vLLM 예산 밖에서 ~2GB 추가 사용)
-GPU_MEM_UTIL = float(os.environ.get("STT_GPU_MEM_UTIL", "0.25"))
+# 24GB 기준 40% ≈ 9.4GB. 0.25(5.9GB)로는 부팅 footprint(ASR 3.4GB + Aligner ~2GB +
+# compile/워밍업 ~2GB ≈ 7.5GB)가 예산을 넘어 KV가 음수로 계산돼 기동 실패
+# (2026-07-13 빈 GPU에서 실측 -1.63GiB). VoxCPM2(~11GB)와 동시 상주 검증됨.
+GPU_MEM_UTIL = float(os.environ.get("STT_GPU_MEM_UTIL", "0.40"))
 # ForcedAligner가 오디오 1건당 최대 5분까지만 지원하므로 65536(기본값)은 과도함.
 # KV 캐시 예산을 아끼기 위해 낮춰서 지정.
 MAX_MODEL_LEN = int(os.environ.get("STT_MAX_MODEL_LEN", "16384"))

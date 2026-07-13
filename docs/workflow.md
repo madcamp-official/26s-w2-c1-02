@@ -75,7 +75,7 @@
 - [x] STT 클라이언트: **5분 청크 분할 + 타임스탬프 오프셋 합산 병합** (ForcedAligner 제약 — 이 스텝 최난도) → [stt-client-workflow.md](ai-pipeline/stt-client-workflow.md)
   - `backend/app/services/stt.py` `transcribe_recording(경로) → [{"start","end","text"}]` (초 float, 문장급)
   - E2E 실측: 2.7분 발표 전사 5.4s(RTF 0.033), 경계 중복 0, CER 0.96%. 팀원2 합류 검증(7단계)만 남음
-- [ ] `transcripts.segments` JSONB 형식(초 단위 float)으로 저장되는지 팀원2와 함께 검증
+- [~] `transcripts.segments` JSONB 형식(초 단위 float)으로 저장되는지 팀원2와 함께 검증 — STT 큐 통합으로 저장 경로는 라이브(업로드→`stt_queue`→`transcripts.segments`, 커밋 707797e). 남은 것: `ts:"MM:SS"` 변환 라우터 연결(현재 `SessionDetail`은 `transcript.status`만 노출, `seconds_to_ts`는 아직 라우터 미연결) → stt-client-workflow §7
 
 ### 팀원1 (Frontend)
 
@@ -89,15 +89,26 @@
 
 ### 팀원3 (AI Pipeline)
 
-- [ ] 질문 생성 프롬프트: slides+transcript+persona 입력 → `text, persona, strategy, evidence{slides, transcript_refs}` JSON 강제. "슬라이드에 있으나 미언급 / 언급했으나 근거 약함" 타게팅 → 세부 계획·격차: [qna-prompt-workflow.md](ai-pipeline/qna-prompt-workflow.md)
-- [ ] 꼬리질문 프롬프트: 답변 원문(raw STT — 간투사 포함이니 노이즈 견디게) 입력, 깊이 1 제한, "생성 안 함" 판정 포함 → 동상
-  - ✅ 선행 완료(2026-07-13): `services/llm/` 스키마·시그니처를 §4.4에 정렬 — `QuestionDraft`(persona/strategy/evidence) 신설, `generate_questions`에 slides+transcript 입력, 깊이 상수 `3→1`(A11), gemini는 evidence 사후검증까지. 남은 건 프롬프트 튜닝·회귀 검증 (overlay 단계 B·C·D)
-- [ ] TTS 연동: 질문 텍스트 → 페르소나 wav 참조 → mp3/wav 저장, 큐 처리 (`tts_status`)
+- [x] 질문 생성 프롬프트: slides+transcript+persona 입력 → `text, persona, strategy, evidence{slides, transcript_refs}` JSON 강제. "슬라이드에 있으나 미언급 / 언급했으나 근거 약함" 타게팅 → 세부 계획·격차: [qna-prompt-workflow.md](ai-pipeline/qna-prompt-workflow.md)
+- [x] 꼬리질문 프롬프트: 답변 원문(raw STT — 간투사 포함이니 노이즈 견디게) 입력, 깊이 1 제한, "생성 안 함" 판정 포함 → 동상
+  - ✅ 완료(2026-07-13): overlay 단계 A(스키마·시그니처 §4.4 정렬)·B(질문 생성 프롬프트)·C(꼬리질문 프롬프트 + gemini prompt-caching으로 토큰 절약) 구현·커밋. 각 단계 오프라인 검증(persona 라운드로빈·evidence 사후검증·깊이 가드·needed 분기) 통과.
+  - 🔜 남음: overlay 단계 **D(회귀 스냅샷 테스트)** + 팀원2 라우터 합류 검증(`POST /qna/generate`→저장→`GET /qna` 필드 일치)
+- [x] TTS 연동: 질문 텍스트 → 페르소나 음색 wav (서버는 wav/pcm만 지원 — mp3 아님) — `services/tts.py` 완료(2026-07-13)
+  - `synthesize_question(text, persona) → wav bytes`: persona→voice 1:1, **미등록 voice(400) → `default` 자동 폴백**(+프로세스 캐시)
+    · 일시 오류(5xx) 백오프 재시도 · 실패 시 `TtsError`(→ `tts_status='failed'`). `list_voices()`로 등록 점검.
+  - 검증: 오프라인 9종(`tests/test_tts.py`, MockTransport) + **라이브 E2E 통과** — teto 합성 285KB wav, 미등록 voice 400→default 폴백 실측
+  - ⚠️ 현재 5종 voice는 **캐리커처**(default 합성→피치/템포 변형, 실제 사람 목소리 아님). 사람 레퍼런스 확보 시
+    refs wav 교체 → VoxCPM2 프로파일 재계산((3)단계) → 서버 재기동으로 품질만 갱신 — voice 이름이 유지되므로 **백엔드 수정 0**
+  - 🔜 저장(`storage.tts_key`)·직렬 큐·`tts_status` 갱신은 팀원2 TTS 잡 몫(경계 규칙) — 조립 스니펫은 tts.py docstring에
 
 ### 팀원2 (Backend Core)
 
 - [ ] `POST /qna/generate` 202 → 팀원3 서비스 호출 → `questions` 저장 + 질문별 TTS 잡
 - [ ] `POST /answer` **202만 반환** → 답변 STT → `answer.status=ready` → 꼬리질문 판정 → `follow_up_status` + 자식 질문 삽입 + `current_question_id` 이동
+  - **꼬리질문 persona = 부모 질문 persona (라우터가 승계)**: `follow_up()`이 반환하는 `QuestionDraft.persona`는
+    placeholder(`egen` 기본값)다. 팀원3의 서비스는 원 질문의 persona를 인자로 받지 않으므로(시그니처 `follow_up(*, question, answer, depth)`),
+    자식 질문 행을 삽입할 때 **부모 질문의 `persona`로 덮어써야** 한다(전략·evidence는 자식 자체 값 사용, evidence는 필요 시 부모 근거 승계 가능).
+    안 덮으면 전 꼬리질문이 egen 말투/음성으로 나가는 버그. → 계약: [qna-prompt-workflow.md](ai-pipeline/qna-prompt-workflow.md) C단계
 - [ ] `pass`(꼬리 생략), `qna/end`(종료 우선순위 A12), 종료 시 리포트 잡 자동 큐
 - [ ] `GET /qna`가 폴링 단일 소스로 spec 예시와 필드 단위 일치하는지 확인
 
