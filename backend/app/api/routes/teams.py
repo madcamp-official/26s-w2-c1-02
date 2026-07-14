@@ -16,9 +16,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_team_leader, require_team_member
+from app.core import storage
 from app.core.errors import ApiError
 from app.db import models
 from app.db.session import get_db
+from app.services.storage_cleanup import team_storage_keys
 from app.services.team_membership import leave_or_succeed
 from app.schemas.team import (
     TeamCard,
@@ -103,10 +105,16 @@ def delete_team(
     team: models.Team = Depends(require_team_leader),
     db: Session = Depends(get_db),
 ) -> None:
-    # 세션·자료·녹음·전사·Q&A·리포트·멤버십·초대까지 DB CASCADE (db-schema §7.3)
-    # 오브젝트 스토리지 파일 삭제는 작업 5에서 추가 예정
+    """팀 삭제 (팀장). DB는 CASCADE, 스토리지 파일은 앱이 정리 (db-schema §7.3).
+
+    세션·자료·녹음·전사·Q&A·리포트·멤버십·초대까지 DB CASCADE.
+    세션 단건 삭제와 같은 규약: storage_key 먼저 수집 → 커밋 → 커밋 성공 후 파일 삭제.
+    """
+    keys = team_storage_keys(db, team.id)
     db.delete(team)
     db.commit()
+    for key in keys:  # 커밋 성공 후에만 파일 삭제 (실패분은 best-effort)
+        storage.delete(key)
 
 
 # ── 팀 나가기 + 팀장 자동 승계 (작업 4-4, db-schema §7.2 · D5) ──────────

@@ -202,6 +202,49 @@ class TestDeleteTeam:
                           headers=_auth("tmtest_a")).json()["id"]
         assert client.delete(f"{TEAMS_URL}/{tid}", headers=_auth("tmtest_b")).status_code == 404
 
+    def test_delete_removes_storage_files_across_sessions(self, two_users):
+        """팀 삭제 → 소속 모든 세션의 파일(자료·녹음·청크·질문TTS·답변오디오)이
+        스토리지에서도 정리된다 (db-schema §7.3, 세션 단건 삭제와 동일 규약)."""
+        from app.core import storage
+        from app.core.ids import new_id
+        from app.db import models
+        owner = two_users["a"]
+        tid = client.post(TEAMS_URL, json={"name": "파일팀"}, headers=_auth("tmtest_a")).json()["id"]
+        s1 = _add_session(tid, owner, "발표1")
+        s2 = _add_session(tid, owner, "발표2")
+
+        # s1: 자료 + 녹음 + 실시간 청크
+        mkey = storage.material_key(s1)
+        rkey = storage.recording_key(s1, "m4a")
+        ckey = storage.recording_chunk_key(s1, 0)
+        # s2: 질문 TTS + 답변 오디오
+        qid = new_id("q")
+        tts_key = storage.tts_key(s2, qid)
+        ans_key = storage.answer_key(s2, qid, "m4a")
+        all_keys = [mkey, rkey, ckey, tts_key, ans_key]
+        for k in all_keys:
+            storage.save(k, b"x")
+
+        with SessionLocal() as db:
+            db.add(models.Material(session_id=s1, status="ready", progress=1.0,
+                                   file_name="d.pdf", file_size_bytes=1, storage_key=mkey))
+            db.add(models.Recording(session_id=s1, status="ready", file_name="r.m4a",
+                                    file_size_bytes=1, mime_type="audio/mp4",
+                                    duration_seconds=10, storage_key=rkey))
+            db.add(models.RecordingChunk(session_id=s1, seq=0, offset_seconds=0.0,
+                                         duration_seconds=60.0, storage_key=ckey))
+            db.add(models.Question(id=qid, session_id=s2, order_index=1, persona="egen",
+                                   strategy="detail_probe", text="?", tts_storage_key=tts_key,
+                                   evidence={"slides": [], "transcript_refs": []}))
+            db.flush()
+            db.add(models.Answer(question_id=qid, kind="answered", status="ready",
+                                 audio_storage_key=ans_key, follow_up_status="none"))
+            db.commit()
+        assert all(storage.exists(k) for k in all_keys)
+
+        assert client.delete(f"{TEAMS_URL}/{tid}", headers=_auth("tmtest_a")).status_code == 204
+        assert not any(storage.exists(k) for k in all_keys)  # 파일 전부 정리
+
 
 def _add_session(team_id: str, owner_id: str, name: str = "리허설") -> str:
     """세션을 DB에 직접 삽입 (세션 API는 Step 2 — 여기선 집계 검증용).
