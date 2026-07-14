@@ -276,8 +276,10 @@ class _ReportTab extends StatelessWidget {
           return _Message(
             r.error?.message ?? '리포트 생성에 실패했어요',
             action: '다시 생성',
-            onAction: () {
-              repo.regenerateReport(sessionId);
+            onAction: () async {
+              // 202 접수 확정 후 폴링 재시작 — 접수 전에 GET이 먼저 가면
+              // 옛 failed를 보고 폴링이 즉시 끝나는 레이스가 있다.
+              await repo.regenerateReport(sessionId);
               retry();
             },
           );
