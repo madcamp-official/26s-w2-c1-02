@@ -39,9 +39,31 @@ logger = logging.getLogger("rehearsal.invites")
 _EMAIL_INVITE_TTL = timedelta(days=7)
 _LINK_TTL = timedelta(days=7)
 
+# 초대코드 알파벳 (plan §11-1): 대문자+숫자에서 혼동 문자 I O 0 1 제외 = 32자.
+# 8자 = 32^8 ≈ 1.1조 경우 + 만료 7일 + 팀당 1개 → 무차별 대입 비현실적.
+# 6자로 줄이지 말 것(경우의 수 3만 배 감소).
+_INVITE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+_INVITE_CODE_LENGTH = 8
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _generate_invite_code(db: Session) -> str:
+    """팀 초대코드 생성 — 짧아서(8자) 구두 전달·입력이 가능한 token.
+
+    실충돌 확률은 무시 가능하지만 token UNIQUE 제약이 있으므로 방어적으로
+    중복 확인 후 재생성한다. 기존 발급된 43자 토큰과의 대조는 문자열 비교라
+    길이가 달라도 계속 유효하다 — 마이그레이션 불필요.
+    """
+    while True:
+        code = "".join(secrets.choice(_INVITE_CODE_ALPHABET) for _ in range(_INVITE_CODE_LENGTH))
+        exists = db.scalar(
+            select(models.TeamInviteLink.id).where(models.TeamInviteLink.token == code)
+        )
+        if exists is None:
+            return code
 
 
 def _preview_url(request: Request, token: str) -> str:
@@ -130,7 +152,7 @@ def rotate_invite_link(
         active.revoked_at = _now()
         db.flush()  # 새 링크 INSERT 전에 UPDATE 반영 → 활성 1개 유니크 위반 방지
     link = models.TeamInviteLink(
-        team_id=team.id, token=secrets.token_urlsafe(32),
+        team_id=team.id, token=_generate_invite_code(db),  # 8자 초대코드 (§11-1)
         created_by=user.id, expires_at=_now() + _LINK_TTL,
     )
     db.add(link)

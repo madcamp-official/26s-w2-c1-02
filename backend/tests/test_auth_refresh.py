@@ -20,6 +20,7 @@ from app.core.security import decode_access_token, hash_refresh_token
 from app.db.models import RefreshToken, User
 from app.db.session import SessionLocal
 from app.main import app
+from tests.conftest import mark_email_verified
 
 # refresh 쿠키는 Secure라 http로는 전송되지 않는다 → Web 흐름은 https 가상 주소로
 client = TestClient(app)                                  # Native(본문) 테스트용
@@ -39,6 +40,7 @@ def test_user():
         "password": CREDS["password"], "email": "rftest@test.io",
     })
     assert res.status_code == 201
+    mark_email_verified(CREDS["username"])  # 로그인 차단(403) 우회
     web.cookies.clear()  # 이전 테스트의 쿠키 오염 방지
     yield res.json()["user"]
     with SessionLocal() as db:

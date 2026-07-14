@@ -26,6 +26,7 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal
 from app.main import app
+from tests.conftest import mark_email_verified
 
 client = TestClient(app)
 
@@ -40,6 +41,7 @@ def _make_user(username: str) -> str:
     res = client.post(SIGNUP, json={"name": username, "username": username,
                                     "password": PASS, "email": f"{username}@test.io"})
     assert res.status_code == 201, res.text
+    mark_email_verified(username)  # 로그인 차단(403) 우회
     return res.json()["user"]["id"]
 
 
@@ -289,6 +291,49 @@ class TestInviteLink:
     def test_outsider_404(self, env):
         assert client.get(f"{TEAMS}/{env['tid']}/invites/link",
                           headers=_auth("invtest_n")).status_code == 404
+
+
+class TestInviteCodeFormat:
+    """초대코드 통일 (plan §11-1, api-spec §3.1): 링크 초대 token = 8자 코드."""
+
+    ALPHABET = set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")  # I O 0 1 제외 32자
+
+    def test_token_is_8_chars_from_safe_alphabet(self, env):
+        """8자 + 혼동 문자(I O 0 1) 없음 — 구두 전달·수기 입력 가능해야 한다."""
+        h = _auth("invtest_a")
+        for _ in range(5):  # 무작위라 여러 번 회전해 형식을 확인
+            token = client.post(f"{TEAMS}/{env['tid']}/invites/link", headers=h).json()["token"]
+            assert len(token) == 8
+            assert set(token) <= self.ALPHABET, f"허용 밖 문자: {token}"
+
+    def test_code_full_flow_preview_and_accept(self, env):
+        """8자 코드로 기존 토큰 플로우(미리보기 → 수락) 전부 동작 — 계약 무변경 확인."""
+        token = client.post(f"{TEAMS}/{env['tid']}/invites/link",
+                            headers=_auth("invtest_a")).json()["token"]
+        assert client.get(f"{TOKENS}/{token}").status_code == 200          # 미리보기(인증 불필요)
+        res = client.post(f"{TOKENS}/{token}/accept", headers=_auth("invtest_n"))
+        assert res.status_code == 200 and res.json()["team_id"] == env["tid"]
+
+    def test_legacy_long_token_still_valid(self, env):
+        """기존 발급분(43자 urlsafe)도 계속 유효 — 검증이 문자열 대조라 길이 무관."""
+        long_token = _insert_link(env["tid"])  # token_urlsafe(16) 직삽입
+        assert client.get(f"{TOKENS}/{long_token}").status_code == 200
+
+    def test_collision_regenerates(self, env, monkeypatch):
+        """UNIQUE 충돌 방어: 이미 존재하는 코드가 뽑히면 버리고 재생성한다.
+
+        랜덤 소스(secrets.choice)를 스크립트해 첫 8글자는 기존 코드와 같게,
+        다음 8글자는 새 코드가 나오게 만든다 — 충돌 검사 로직 자체를 통과시켜야
+        하므로 _generate_invite_code를 직접 패치하면 안 된다."""
+        import app.api.routes.invites as invites_module
+
+        existing = "AAAA2222"
+        _insert_link(env["tid"], token=existing)
+
+        chars = iter(existing + "BBBB3333")
+        monkeypatch.setattr(invites_module.secrets, "choice", lambda _alpha: next(chars))
+        with SessionLocal() as db:
+            assert invites_module._generate_invite_code(db) == "BBBB3333"
 
 
 # ── 토큰 미리보기 (인증 불필요) ────────────────────────────────────────
