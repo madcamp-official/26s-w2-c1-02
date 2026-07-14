@@ -29,7 +29,7 @@ from app.schemas.qna import (
     TtsOut,
 )
 from app.schemas.session import ErrorInfo
-from app.services import qna_jobs, stt_queue
+from app.services import qna_jobs, report_jobs, stt_queue
 from app.services.session_state import advance_status
 from app.services.stt import seconds_to_ts
 
@@ -161,6 +161,7 @@ def submit_answer(
 
 @router.post("/sessions/{session_id}/qna/questions/{question_id}/pass", status_code=200)
 def pass_question(
+    background: BackgroundTasks,
     question_id: str,
     body: PassRequest | None = None,
     session: models.RehearsalSession = Depends(require_session_owner),
@@ -171,6 +172,8 @@ def pass_question(
     reason = body.reason if body is not None else "user"
     qna_jobs.record_pass(db, session, question, reason)
     db.refresh(session)
+    if session.status == SessionStatus.completed:  # 마지막 질문 패스 → 자동 종료 → 리포트(A7)
+        background.add_task(report_jobs.run_report, session.id)
     return {
         "status": session.status.value,
         "current_question_id": session.current_question_id,
@@ -182,10 +185,11 @@ def pass_question(
 
 @router.post("/sessions/{session_id}/qna/end", status_code=200)
 def end_qna(
+    background: BackgroundTasks,
     session: models.RehearsalSession = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ) -> dict:
-    """질의응답 사용자 종료 (owner) → completed + 리포트 자동 큐 (A7).
+    """질의응답 사용자 종료 (owner) → completed + 리포트 자동 생성 (A7).
 
     A12: 사용자 종료가 최우선순위 → ended_reason=user_end (질의 수 도달 여부와 무관)."""
     if session.status != SessionStatus.qna:
@@ -193,6 +197,7 @@ def end_qna(
     qna_jobs.end_session(db, session, EndedReason.user_end)
     db.commit()
     db.refresh(session)
+    background.add_task(report_jobs.run_report, session.id)
     return {"status": session.status.value, "ended_reason": session.qna_ended_reason.value}
 
 

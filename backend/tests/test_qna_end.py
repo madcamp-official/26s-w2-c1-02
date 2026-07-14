@@ -84,12 +84,13 @@ class TestEndSuccess:
         assert ses.qna_ended_reason == "user_end"       # A12: 사용자 종료 최우선
         assert ses.current_question_id is None
 
-    def test_report_queued_on_end(self, ctx):
+    def test_report_generated_on_end(self, ctx):
         sid, _, _ = ctx
         client.post(END.format(sid), headers=_auth("qend_owner"))
         with SessionLocal() as db:
             report = db.get(Report, sid)
-            assert report is not None and report.status == "queued"  # 리포트 잡 트리거(Step 4)
+            # 종료가 리포트 잡(run_report)까지 트리거 — mock LLM이라 즉시 ready (Step 4)
+            assert report is not None and report.status == "ready"
 
 
 class TestEndIntegration:

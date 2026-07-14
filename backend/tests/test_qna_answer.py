@@ -216,7 +216,8 @@ class TestAutoEnd:
         assert ses.qna_ended_reason == "count_reached"
         assert ses.current_question_id is None
         with SessionLocal() as db:
-            assert db.get(Report, sid).status == "queued"  # 리포트 잡 트리거(Step 4)
+            # 자동 종료가 워커에서 리포트 잡까지 인라인 실행 — mock LLM이라 ready (Step 4)
+            assert db.get(Report, sid).status == "ready"
 
 
 class TestPass:
@@ -241,7 +242,7 @@ class TestPass:
         assert ses.status == "completed"
         assert ses.qna_ended_reason == "timeout"      # A12: 마지막이 timeout이면 timeout
         with SessionLocal() as db:
-            assert db.get(Report, sid).status == "queued"
+            assert db.get(Report, sid).status == "ready"  # pass 라우트가 리포트 잡 트리거
 
     def test_pass_last_user_ends_count_reached(self, ctx):
         sid, q, _ = ctx
