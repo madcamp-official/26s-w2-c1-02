@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:just_audio/just_audio.dart';
 
+import '../config/env.dart';
+
 /// 질문 TTS 재생 추상화 (api-spec §4.4 — 질문 음성 1회 재생).
 ///
 /// - 실서버: `question.tts.audio_url`(http) → [JustAudioPlayerService]가 실제 재생.
@@ -47,7 +49,12 @@ class JustAudioPlayerService implements AudioPlayerService {
       return completer.future;
     }
 
-    await _player.setUrl(url);
+    // 백엔드 서명 URL은 상대경로(/api/v1/files/…) — 플랫폼별 API 호스트를 붙인다.
+    // (iOS AVPlayer는 스킴 없는 URL에 -1002 unsupported URL, 웹은 dev 서버
+    // 오리진으로 잘못 해석되므로 재생 직전 이 단일 지점에서 절대화한다.)
+    final resolved = url.startsWith('/') ? '${Env.apiBaseUrl}$url' : url;
+
+    await _player.setUrl(resolved);
     // just_audio의 play()는 재생이 끝나거나 정지되면 완료된다.
     await _player.play();
   }
