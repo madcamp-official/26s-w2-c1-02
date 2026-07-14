@@ -33,6 +33,8 @@ _SchemaT = TypeVar("_SchemaT", bound=BaseModel)
 # 프롬프트에 넣는 텍스트 상한(대략 토큰 폭주 방지용).
 _SLIDES_CHAR_LIMIT = 15_000
 _TRANSCRIPT_CHAR_LIMIT = 15_000
+# 채점 프롬프트의 답변 목록 총량 상한(슬라이드·전사와 동일한 방어) — 초과분은 잘라 낸다.
+_ANSWERS_CHAR_LIMIT = 15_000
 
 _PERSONA_STYLE: dict[QuestionerPersona, str] = {
     QuestionerPersona.egen: "부드럽고 공감형. 맥락·배경·발표자의 의도를 궁금해하며 묻는다.",
@@ -230,9 +232,14 @@ class GeminiLLMProvider(LLMProvider):
         self, scorable: list[tuple[QuestionStrategy, str, str]], speech_name: str | None,
     ) -> str:
         # 루브릭·규칙은 _SYSTEM_INSTRUCTION(캐시)에 있고, 여기엔 이번 세션 답변만 담는다.
-        lines = []
+        # 슬라이드·전사와 동일하게 총량 상한을 둬 비정상적으로 긴 답변의 토큰 폭주를 막는다.
+        lines, used = [], 0
         for i, (strategy, question, answer) in enumerate(scorable, 1):
-            lines.append(f"{i}. [전략:{strategy.value}] 질문: {question}\n   답변: {answer}")
+            line = f"{i}. [전략:{strategy.value}] 질문: {question}\n   답변: {answer}"
+            used += len(line)
+            if used > _ANSWERS_CHAR_LIMIT:
+                break
+            lines.append(line)
         body = "\n".join(lines)
         return (
             "[작업] 답변 채점 + 인사이트\n"
