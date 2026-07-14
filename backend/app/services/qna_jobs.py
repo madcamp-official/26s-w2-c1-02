@@ -210,7 +210,7 @@ def _decide_follow_up_and_advance(db, question: models.Question, answer: models.
                 session_id=question.session_id, parent_id=question.id,
                 follow_up_depth=question.follow_up_depth + 1,
                 order_index=question.order_index,  # 꼬리는 부모와 같은 순번(부모 뒤 표시)
-                persona=draft.persona, strategy=draft.strategy,
+                persona=question.persona, strategy=draft.strategy,
                 text=draft.text, evidence=draft.evidence.model_dump(),
                 tts_status=AsyncStatus.queued,
             )
