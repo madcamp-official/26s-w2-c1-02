@@ -15,6 +15,30 @@
       ],
       "cwd": "frontend",
       "port": 8080
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--port", "8000"],
+      "cwd": "backend",
+      "port": 8000
+    },
+    {
+      "name": "flutter-web-real",
+      "runtimeExecutable": "flutter",
+      "runtimeArgs": [
+        "run",
+        "-d",
+        "web-server",
+        "--web-port",
+        "8080",
+        "--web-hostname",
+        "127.0.0.1",
+        "--dart-define=USE_MOCK=false",
+        "--dart-define=API_BASE_URL=http://localhost:8000"
+      ],
+      "cwd": "frontend",
+      "port": 8080
     }
   ]
 }
