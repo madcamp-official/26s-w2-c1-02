@@ -37,6 +37,23 @@ class SignupResponse(BaseModel):
     user: UserOut
 
 
+class VerifyRequestBody(BaseModel):
+    """POST /auth/email/verify-request 요청 (api-spec §2) — 인증코드 재발송."""
+
+    email: str = Field(max_length=254, pattern=_EMAIL_PATTERN)
+
+
+class VerifyBody(BaseModel):
+    """POST /auth/email/verify 요청 (api-spec §2).
+
+    코드 형식 위반(5자리, 문자 포함 등)은 여기(422)서 걸려 라우트까지 안 온다.
+    [0-9]로 제한 — \\d는 유니코드 숫자(전각 ６ 등)까지 통과시키므로 쓰지 않는다.
+    """
+
+    email: str = Field(max_length=254, pattern=_EMAIL_PATTERN)
+    code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
+
+
 class LoginRequest(BaseModel):
     """POST /auth/login 요청 (api-spec §2)."""
 
