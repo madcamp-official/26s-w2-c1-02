@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
@@ -13,6 +14,16 @@ from app.core.config import settings
 from app.core.errors import ApiError, api_error_handler, validation_error_handler
 from app.db.session import get_db
 from app.services import report_jobs, stt_queue
+
+# 앱 로거(rehearsal.*)를 콘솔에 노출한다. uvicorn 기본 로깅은 자기 로거에만 핸들러를
+# 붙이므로, 이 설정이 없으면 INFO 로그(특히 EMAIL_PROVIDER=mock의 인증코드 출력)가
+# 전부 삼켜져 mock 모드로 인증을 진행할 방법이 없다.
+_rehearsal_logger = logging.getLogger("rehearsal")
+if not _rehearsal_logger.handlers:  # --reload 등으로 재실행돼도 핸들러 중복 방지
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s - %(message)s"))
+    _rehearsal_logger.addHandler(_handler)
+    _rehearsal_logger.setLevel(logging.INFO)
 
 
 @asynccontextmanager
