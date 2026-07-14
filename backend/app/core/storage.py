@@ -85,6 +85,17 @@ def load(key: str) -> bytes:
     return path.read_bytes()
 
 
+def local_path(key: str) -> Path:
+    """서빙용 실제 파일 경로 (없으면 FileNotFoundError — load와 동일 계약).
+
+    파일 라우트가 FileResponse로 스트리밍(Range/206)할 때 쓴다 — 오디오 재생은
+    iOS AVPlayer가 Range 요청을 요구하므로 bytes 통짜 응답으로는 안 된다."""
+    path = _resolve(key)
+    if not path.is_file():
+        raise FileNotFoundError(key)
+    return path
+
+
 def exists(key: str) -> bool:
     try:
         return _resolve(key).is_file()
