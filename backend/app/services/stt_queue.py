@@ -82,6 +82,54 @@ def _run_stt(session_id: str) -> None:
         db.commit()
 
 
+def _run_chunk_stt(session_id: str, seq: int) -> None:
+    """실시간 녹음 청크 하나를 전사해 recording_chunks.segments(청크-로컬)에 저장한다.
+
+    청크 실패는 세션·transcript를 failed로 만들지 않는다 — /recording/complete의
+    전체 파일이 안전망이므로 누락 청크는 거기서 재전사된다(api-spec §4.3.1 ②).
+    예외는 밖으로 던지지 않는다(워커 보호)."""
+    with SessionLocal() as db:
+        chunk = db.get(models.RecordingChunk, (session_id, seq))
+        if chunk is None:  # 세션/청크 삭제됨
+            return
+        chunk.status = AsyncStatus.processing
+        db.commit()
+
+        tmp_path: str | None = None
+        try:
+            data = storage.load(chunk.storage_key)
+            suffix = Path(chunk.storage_key).suffix or ".wav"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
+                f.write(data)
+                tmp_path = f.name
+            # 청크는 ≤64초라 transcribe_recording 내부에서 재분할되지 않는다
+            # → 청크-로컬 타임스탬프(offset 0) 그대로 반환. 병합은 /complete에서.
+            segments = transcribe_recording(tmp_path)
+        except UnsupportedMediaError as e:
+            _fail_chunk(db, chunk, "UNSUPPORTED_MEDIA", str(e))
+            return
+        except Exception as e:  # SttError·StorageError·기타 — 청크만 failed로 흡수
+            _fail_chunk(db, chunk, "STT_FAILED", str(e))
+            return
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+        chunk.segments = segments
+        chunk.status = AsyncStatus.ready
+        chunk.error_code = None
+        chunk.error_message = None
+        db.commit()
+
+
+def _fail_chunk(db, chunk: "models.RecordingChunk", code: str, message: str) -> None:
+    """청크 하나만 failed로 표시. 세션·transcript는 건드리지 않는다(전체 파일이 안전망)."""
+    chunk.status = AsyncStatus.failed
+    chunk.error_code = code
+    chunk.error_message = message[:500]
+    db.commit()
+
+
 def _fail(db, transcript: models.Transcript, session_id: str, code: str, message: str) -> None:
     transcript.status = AsyncStatus.failed
     transcript.error_code = code
@@ -101,6 +149,10 @@ def _worker_loop() -> None:
         try:
             if kind == "recording":
                 _run_stt(item_id)
+            elif kind == "chunk":
+                # item_id = "<session_id>:<seq>" (session_id에 ':'는 없음)
+                sid, seq_str = item_id.rsplit(":", 1)
+                _run_chunk_stt(sid, int(seq_str))
             elif kind == "answer":
                 # 답변 전사+꼬리질문은 Q&A 도메인 로직 — 순환 임포트를 피해 지연 임포트.
                 from app.services.qna_jobs import run_answer_stt
@@ -133,6 +185,15 @@ def enqueue_recording(session_id: str) -> None:
 enqueue = enqueue_recording
 
 
+def enqueue_chunk(session_id: str, seq: int) -> None:
+    """실시간 녹음 청크의 STT 잡을 큐에 넣는다(api-spec §4.3.1).
+
+    발표·답변 전사와 **같은 직렬 워커**를 공유한다 — 발표 중엔 답변 STT가 없어
+    경합이 없고, GPU 직렬 제약(infra 제약 2)을 그대로 지킨다."""
+    start()
+    _queue.put(("chunk", f"{session_id}:{seq}"))
+
+
 def enqueue_answer(question_id: str) -> None:
     """답변 오디오의 STT 잡을 큐에 넣는다. 발표 전사와 같은 워커를 공유(직렬)."""
     start()
@@ -161,9 +222,18 @@ def recover() -> None:
                 models.Answer.status == AnswerStatus.processing
             )
         ).all()
+        # 실시간 녹음 청크: 미완료(queued/processing) 청크를 다시 큐에 (§4.3.1)
+        chunk_keys = db.execute(
+            select(models.RecordingChunk.session_id, models.RecordingChunk.seq).where(
+                models.RecordingChunk.status.in_([AsyncStatus.queued, AsyncStatus.processing])
+            )
+        ).all()
     for sid in rec_ids:
         enqueue_recording(sid)
     for qid in ans_ids:
         enqueue_answer(qid)
-    if rec_ids or ans_ids:
-        logger.info("STT 큐 복구: 발표 %d건 · 답변 %d건 재등록", len(rec_ids), len(ans_ids))
+    for sid, seq in chunk_keys:
+        enqueue_chunk(sid, seq)
+    if rec_ids or ans_ids or chunk_keys:
+        logger.info("STT 큐 복구: 발표 %d건 · 답변 %d건 · 청크 %d건 재등록",
+                    len(rec_ids), len(ans_ids), len(chunk_keys))
