@@ -27,6 +27,7 @@ class QnaStatus(StrEnum):
 
     in_progress = "in_progress"
     ended = "ended"
+    failed = "failed"        # 질문 생성 실패(session.failed) — 재생성으로 복구
 
 
 # ── LLM 계약 (generate_questions·follow_up 반환형) ────────────────────

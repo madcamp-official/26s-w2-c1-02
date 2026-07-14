@@ -43,10 +43,14 @@ _ALREADY_STARTED = {
 }
 
 # GET /qna를 볼 수 있는 상태 (질문 생성 이후). 그 전엔 409 QNA_NOT_STARTED.
+# failed도 포함한다 — 생성 시작 후 LLM 실패로 failed가 된 세션을 QNA_NOT_STARTED
+# ("아직 생성 전")로 오해시키지 않고, status=failed로 내려 폴링 화면이 '재생성'을
+# 안내하게 한다. (진짜 생성 전인 draft·transcribing은 여전히 409.)
 _QNA_VIEWABLE = {
     SessionStatus.generating_questions,  # 생성 중 — questions 빈 채로 폴링 가능
     SessionStatus.qna,
     SessionStatus.completed,
+    SessionStatus.failed,                # 생성 실패 — status=failed로 노출(재생성 가능)
 }
 
 _MAX_ANSWER_BYTES = 200 * 1024 * 1024  # §1.3: 200MB (답변은 짧지만 상한은 녹음과 동일)
@@ -252,7 +256,12 @@ def get_qna(
     ).all()
     items = [_question_out(q, db.get(models.Answer, q.id)) for q in questions]
 
-    status = QnaStatus.ended if session.status == SessionStatus.completed else QnaStatus.in_progress
+    if session.status == SessionStatus.completed:
+        status = QnaStatus.ended
+    elif session.status == SessionStatus.failed:
+        status = QnaStatus.failed          # 생성 실패 — FE가 재생성 안내
+    else:
+        status = QnaStatus.in_progress
     return QnaStateOut(
         status=status,
         current_question_id=session.current_question_id,

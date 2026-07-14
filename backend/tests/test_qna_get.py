@@ -176,6 +176,17 @@ class TestStatusMapping:
         assert r.status_code == 409
         assert r.json()["error"]["code"] == "QNA_NOT_STARTED"
 
+    def test_generation_failed_maps_to_failed(self, ctx):
+        """생성 시작 후 LLM 실패로 failed가 된 세션은 QNA_NOT_STARTED(409)가 아니라
+        status=failed(200)로 내려, FE가 재생성을 안내할 수 있어야 한다."""
+        sid, _, _ = ctx
+        with SessionLocal() as db:
+            db.get(RehearsalSession, sid).status = SessionStatus.failed
+            db.commit()
+        r = client.get(QNA.format(sid), headers=_auth("qget_owner"))
+        assert r.status_code == 200
+        assert r.json()["status"] == "failed"
+
 
 class TestQuestionDetail:
     def test_get_single_question(self, ctx):
