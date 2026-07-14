@@ -45,12 +45,13 @@ class MockLLMProvider(LLMProvider):
         question: str,
         answer: str,
         depth: int,
+        persona: QuestionerPersona,
     ) -> QuestionDraft | None:
         if depth >= MAX_FOLLOW_UP_DEPTH:
             return None
         return QuestionDraft(
             text="(예시) 방금 답변에 대해 조금 더 구체적으로 말씀해 주시겠어요?",
-            persona=QuestionerPersona.egen,
+            persona=persona,  # 부모 페르소나 승계
             strategy=QuestionStrategy.detail_probe,
             follow_up_depth=depth + 1,
         )
