@@ -111,12 +111,10 @@ class _FollowUpOut(BaseModel):
     strategy: QuestionStrategy | None = None
 
 
-class _AnswerScore(BaseModel):
-    score: float                       # 답변 1건 점수 0.0~1.0 (입력 순서대로)
-
-
 class _ReportOut(BaseModel):
-    scores: list[_AnswerScore]         # 답변과 같은 순서
+    # 답변별 점수 0.0~1.0을 입력과 같은 순서로. 래퍼 객체 대신 바로 float 배열을
+    # 받아 출력 토큰(캐시 안 되는 가장 비싼 축)에서 답변당 JSON 보일러플레이트를 없앤다.
+    scores: list[float]
     insight: str                       # 세션 코칭 한두 문장
 
 
@@ -220,7 +218,7 @@ class GeminiLLMProvider(LLMProvider):
         out = await self._generate(prompt, _ReportOut, temperature=0.3)
 
         # LLM이 답변 수와 다른 개수를 줄 수 있으니 zip으로 안전 정렬(짧은 쪽 기준).
-        pairs = [(strat, sc.score) for (strat, _q, _a), sc in zip(scorable, out.scores)]
+        pairs = [(strat, sc) for (strat, _q, _a), sc in zip(scorable, out.scores)]
         return ReportDraft(
             type_scores=build_type_scores(pairs),
             insight=(out.insight or "").strip(),
