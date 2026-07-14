@@ -17,6 +17,7 @@ from app.core import storage
 from app.db.models import Material, Team, TeamMember, User
 from app.db.session import SessionLocal
 from app.main import app
+from tests.conftest import mark_email_verified
 
 client = TestClient(app)
 
@@ -39,6 +40,7 @@ def _pdf(page_texts: list[str]) -> bytes:
 def _mkuser(u: str) -> str:
     r = client.post("/api/v1/auth/signup", json={"name": u, "username": u,
                     "password": "matr-pass-123", "email": f"{u}@t.io"})
+    mark_email_verified(u)  # 로그인 차단(403) 우회 — email-verification-plan 작업 6
     return r.json()["user"]["id"]
 
 

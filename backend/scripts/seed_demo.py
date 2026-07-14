@@ -76,7 +76,10 @@ def main() -> None:
 
         user = models.User(username=USERNAME, name="데모 발표자",
                            email="demo@rehearsal.io",
-                           password_hash=hash_password(PASSWORD))
+                           password_hash=hash_password(PASSWORD),
+                           # demo@rehearsal.io는 실재하지 않는 주소라 코드 수신 불가 —
+                           # 로그인 차단(403)에 안 걸리게 생성 시점에 인증 처리 (plan §7-2)
+                           email_verified_at=datetime.now(timezone.utc))
         db.add(user)
         db.flush()
         team = models.Team(name="말꼬리 스터디", leader_id=user.id)

@@ -26,6 +26,7 @@ from app.db import models
 from app.db.models import Team, TeamMember, User
 from app.db.session import SessionLocal
 from app.main import app
+from tests.conftest import mark_email_verified
 
 # 팀·유저 준비는 실제 API로 (main 앱)
 main_client = TestClient(app)
@@ -60,6 +61,7 @@ def _make_user(username: str, name: str) -> str:
         "password": PASS, "email": f"{username}@test.io",
     })
     assert res.status_code == 201, res.text
+    mark_email_verified(username)  # 로그인 차단(403) 우회
     return res.json()["user"]["id"]
 
 

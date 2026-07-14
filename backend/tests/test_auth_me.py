@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.db.models import User
 from app.db.session import SessionLocal
 from app.main import app
+from tests.conftest import mark_email_verified
 
 client = TestClient(app)
 
@@ -36,6 +37,7 @@ def test_user():
         "password": CREDS["password"], "email": "metest@test.io",
     })
     assert res.status_code == 201
+    mark_email_verified(CREDS["username"])  # 로그인 차단(403) 우회
     yield res.json()["user"]
     with SessionLocal() as db:
         db.execute(delete(User).where(User.username.ilike("metest%")))

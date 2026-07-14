@@ -49,6 +49,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # 429 RATE_LIMITED의 Retry-After를 웹 FE(JS)가 읽을 수 있게 노출 (spec §2)
+    expose_headers=["Retry-After"],
 )
 
 # api-spec §1: Base URL = /api/v1 (refresh 쿠키의 Path=/api/v1/auth도 여기에 의존)

@@ -18,6 +18,7 @@ from app.db.enums import AsyncStatus, QuestionerPersona, QuestionStrategy
 from app.db.models import Question, Team, User
 from app.db.session import SessionLocal
 from app.main import app
+from tests.conftest import mark_email_verified
 from app.services import qna_jobs
 from app.services.tts import TtsError
 
@@ -29,6 +30,7 @@ WAV = b"RIFF\x24\x00\x00\x00WAVEfmt "
 def _mkuser(u: str) -> str:
     r = client.post("/api/v1/auth/signup", json={"name": u, "username": u,
                     "password": "qtts-pass-123", "email": f"{u}@t.io"})
+    mark_email_verified(u)  # 로그인 차단(403) 우회 — email-verification-plan 작업 6
     return r.json()["user"]["id"]
 
 

@@ -20,6 +20,7 @@ from sqlalchemy import delete, select, text
 from app.db.models import Team, TeamMember, User
 from app.db.session import SessionLocal
 from app.main import app
+from tests.conftest import mark_email_verified
 
 client = TestClient(app)
 
@@ -28,6 +29,7 @@ def _signup_login(username: str) -> dict:
     client.post("/api/v1/auth/signup", json={
         "name": username, "username": username,
         "password": "invariant-123", "email": f"{username}@t.io"})
+    mark_email_verified(username)  # 로그인 차단(403) 우회
     return client.post("/api/v1/auth/login",
                        json={"username": username, "password": "invariant-123"},
                        headers={"X-Client-Platform": "ios"}).json()
