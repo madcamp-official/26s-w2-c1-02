@@ -56,8 +56,8 @@ class MockBackend implements HttpBackend {
       'name': 'teamname1',
       'leader_id': 'usr_1',
       'members': [
-        {'user_id': 'usr_1', 'name': '준서'},
-        {'user_id': 'usr_2', 'name': '서진'},
+        {'id': 'usr_1', 'name': '준서'},
+        {'id': 'usr_2', 'name': '서진'},
       ],
       'session_count': 2,
     },
@@ -66,9 +66,9 @@ class MockBackend implements HttpBackend {
       'name': 'teamname2',
       'leader_id': 'usr_2',
       'members': [
-        {'user_id': 'usr_1', 'name': '준서'},
-        {'user_id': 'usr_2', 'name': '서진'},
-        {'user_id': 'usr_3', 'name': '서영'},
+        {'id': 'usr_1', 'name': '준서'},
+        {'id': 'usr_2', 'name': '서진'},
+        {'id': 'usr_3', 'name': '서영'},
       ],
       'session_count': 0,
     },
@@ -428,7 +428,7 @@ class MockBackend implements HttpBackend {
       'name': r.jsonBody?['name'] ?? '새 팀',
       'leader_id': 'usr_1',
       'members': [
-        {'user_id': 'usr_1', 'name': '준서'},
+        {'id': 'usr_1', 'name': '준서'},
       ],
       'session_count': 0,
     };

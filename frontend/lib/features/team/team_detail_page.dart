@@ -24,6 +24,10 @@ class TeamDetailPage extends StatefulWidget {
 }
 
 class _TeamDetailPageState extends State<TeamDetailPage> {
+  /// GET /teams/{id} 상세 — members·leader_id 포함.
+  /// 목록 캐시(TeamCard)엔 둘 다 없어서 멤버 표시·팀장 판별에 쓸 수 없다.
+  Team? _detail;
+
   @override
   void initState() {
     super.initState();
@@ -32,12 +36,21 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
       if (context.read<TeamController>().byId(widget.teamId) == null) {
         context.read<TeamController>().load();
       }
+      _loadDetail();
     });
+  }
+
+  Future<void> _loadDetail() async {
+    final detail =
+        await context.read<TeamRepository>().getTeam(widget.teamId);
+    if (mounted) setState(() => _detail = detail);
   }
 
   @override
   Widget build(BuildContext context) {
-    final team = context.watch<TeamController>().byId(widget.teamId);
+    // 상세 우선, 로딩 동안은 목록 캐시로 이름이라도 표시.
+    final team = _detail ?? context.watch<TeamController>().byId(widget.teamId);
+    final myId = context.watch<AuthController>().user?.id;
     final sessions = context.watch<SessionController>().sessionsOf(widget.teamId);
 
     return Scaffold(
@@ -65,19 +78,33 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
+                    // 멤버는 서버가 팀 가입순(joined_at)으로 정렬해 내려준다.
                     ...team.members.map((m) => Chip(
-                          label: Text(
-                            m.userId == team.leaderId
-                                ? '${m.name} (팀장)'
-                                : m.name,
-                            style: const TextStyle(fontSize: 12),
+                          label: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (m.userId == team.leaderId)
+                                const Padding(
+                                  padding: EdgeInsets.only(right: 3),
+                                  child: Text('👑',
+                                      style: TextStyle(fontSize: 11)),
+                                ),
+                              Text(m.name,
+                                  style: const TextStyle(fontSize: 12)),
+                            ],
                           ),
-                          backgroundColor: m.userId == team.leaderId
-                              ? AppColors.accent.withValues(alpha: 0.15)
+                          // '나'는 옅은 주황 음영으로 구분
+                          backgroundColor: m.userId == myId
+                              ? AppColors.accent.withValues(alpha: 0.18)
                               : AppColors.surface,
+                          side: BorderSide.none,
                         )),
                     ActionChip(
-                      label: const Text('+ 초대', style: TextStyle(fontSize: 12)),
+                      label: const Text('+ 초대',
+                          style: TextStyle(
+                              fontSize: 12, color: AppColors.textSecondary)),
+                      backgroundColor: AppColors.surface, // 옅은 회색 — 멤버 뒤 고정
+                      side: BorderSide.none,
                       onPressed: () => _showInviteCode(team),
                     ),
                   ],
@@ -86,11 +113,14 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
               const Text('발표 세션',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
               const SizedBox(height: 12),
-              ...sessions.map((s) => _SessionCard(session: s)),
+              // 새 발표 시작은 항상 맨 위 — 세션이 쌓여도 스크롤 없이 바로 진입.
               _AddSessionCard(
                 onTap: () =>
                     context.push('/teams/${widget.teamId}/sessions/new'),
               ),
+              const SizedBox(height: 16),
+              // 기존 세션은 최신이 위(LIFO — 서버가 created_at DESC로 내려줌).
+              ...sessions.map((s) => _SessionCard(session: s)),
             ],
           ),
         ),
@@ -113,6 +143,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
 
     showModalBottomSheet<void>(
       context: context,
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => SafeArea(
@@ -124,14 +155,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
               child: Text('팀 관리',
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
             ),
-            ListTile(
-              leading: const Icon(Icons.person_add_alt),
-              title: const Text('팀원 초대하기'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _showInviteCode(team);
-              },
-            ),
+            // '팀원 초대하기'는 본문 멤버 줄의 '+ 초대' 칩으로 일원화 — 시트에선 제거.
             ListTile(
               leading: const Icon(Icons.logout),
               title: const Text('팀 나가기'),
