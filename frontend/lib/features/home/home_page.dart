@@ -86,39 +86,114 @@ class _HomePageState extends State<HomePage> {
 
 /// 초대코드 입력 → 기존 초대 수락 화면(/invites/{code}) 재사용 (§11-2).
 Future<void> _joinByCode(BuildContext context) async {
-  final controller = TextEditingController();
   final code = await showDialog<String>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: const Text('초대코드로 참여'),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        maxLength: 8,
-        textCapitalization: TextCapitalization.characters,
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-            fontSize: 22, fontWeight: FontWeight.w700, letterSpacing: 4),
-        decoration: const InputDecoration(
-            hintText: '8자 코드', counterText: ''),
-        onSubmitted: (v) => Navigator.pop(ctx, v),
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
-        FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
-          onPressed: () => Navigator.pop(ctx, controller.text),
-          child: const Text('확인'),
-        ),
-      ],
-    ),
+    builder: (_) => const _InviteCodeDialog(),
   );
-  controller.dispose();
   final trimmed = code?.trim().toUpperCase() ?? '';
   if (trimmed.isEmpty || !context.mounted) return;
   context.push('/invites/$trimmed'); // 미리보기(팀명·인원) → 수락은 기존 화면 몫
+}
+
+/// 초대코드 입력 다이얼로그.
+///
+/// 컨트롤러를 State가 소유해야 한다 — showDialog 밖에서 만들고 pop 직후
+/// dispose하면, 닫힘 애니메이션 동안 살아 있는 TextField가 폐기된 컨트롤러를
+/// 참조해 예외가 나며 화면이 먹통이 된다(QA에서 '취소' 시 재현된 버그).
+class _InviteCodeDialog extends StatefulWidget {
+  const _InviteCodeDialog();
+
+  @override
+  State<_InviteCodeDialog> createState() => _InviteCodeDialogState();
+}
+
+class _InviteCodeDialogState extends State<_InviteCodeDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose(); // 라우트가 완전히 제거된 뒤 호출 — 애니메이션 안전
+    super.dispose();
+  }
+
+  static final _buttonShape =
+      RoundedRectangleBorder(borderRadius: BorderRadius.circular(12));
+
+  @override
+  Widget build(BuildContext context) {
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: const BorderSide(color: AppColors.accent, width: 1.4),
+    );
+    return Dialog(
+      backgroundColor: AppColors.background,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('초대코드를 입력해주세요',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              maxLength: 8,
+              textCapitalization: TextCapitalization.characters,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  fontSize: 22, fontWeight: FontWeight.w700, letterSpacing: 4),
+              decoration: InputDecoration(
+                counterText: '',
+                enabledBorder: border,
+                focusedBorder: border.copyWith(
+                    borderSide: const BorderSide(
+                        color: AppColors.accent, width: 1.8)),
+              ),
+              onSubmitted: (v) => Navigator.pop(context, v),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(44),
+                      backgroundColor: AppColors.background,
+                      foregroundColor: AppColors.accent,
+                      side: const BorderSide(
+                          color: AppColors.accent, width: 1.4),
+                      shape: _buttonShape,
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('취소',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(44),
+                      backgroundColor: AppColors.accent,
+                      foregroundColor: Colors.white,
+                      shape: _buttonShape,
+                    ),
+                    onPressed: () => Navigator.pop(context, _controller.text),
+                    child: const Text('확인',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// 팀 목록 하단의 "초대코드로 참여" 진입 카드.
