@@ -20,11 +20,7 @@ from app.db import models
 from app.db.enums import AsyncStatus
 from app.db.session import SessionLocal, get_db
 from app.schemas.session import ErrorInfo, MaterialDetail
-from app.services.material import (
-    PdfParseError,
-    UnprocessablePdfError,
-    parse_pdf_to_slides,
-)
+from app.services.material import UnprocessablePdfError, parse_pdf_to_slides
 
 router = APIRouter(tags=["materials"])
 logger = logging.getLogger("rehearsal.material")
@@ -51,7 +47,10 @@ def _run_parse(session_id: str) -> None:
         except UnprocessablePdfError as e:
             _fail(db, material, "UNPROCESSABLE_PDF", str(e))
             return
-        except (PdfParseError, FileNotFoundError, OSError) as e:
+        except Exception as e:
+            # PdfParseError 외의 예상 못한 예외도 전부 흡수 — 던지면 잡이 조용히
+            # 죽고 status가 processing에 영원히 갇힌다(retry는 failed만 받는다).
+            logger.exception("자료 파싱 잡 실패: %s", session_id)
             _fail(db, material, "PDF_PARSE_ERROR", str(e))  # retry 대상
             return
 
