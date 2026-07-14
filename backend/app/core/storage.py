@@ -38,6 +38,10 @@ def recording_key(session_id: str, ext: str) -> str:
     return f"sessions/{session_id}/recording.{ext.lstrip('.')}"
 
 
+def recording_chunk_key(session_id: str, seq: int, ext: str = "wav") -> str:
+    return f"sessions/{session_id}/chunks/{seq:04d}.{ext.lstrip('.')}"
+
+
 def tts_key(session_id: str, question_id: str, ext: str = "wav") -> str:
     return f"sessions/{session_id}/tts/{question_id}.{ext.lstrip('.')}"
 

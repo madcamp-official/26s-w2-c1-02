@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.routes import (
-    auth, files, invites, materials, qna, recordings, reports, sessions, speeches, teams,
+    auth, files, invites, materials, qna, recordings, reports, sessions, speeches, teams, users,
 )
 from app.core.config import settings
 from app.core.errors import ApiError, api_error_handler, validation_error_handler
@@ -52,7 +52,8 @@ app.include_router(sessions.router, prefix=API_V1)       # /teams/{id}/sessions,
 app.include_router(materials.router, prefix=API_V1)      # /sessions/{id}/material
 app.include_router(recordings.router, prefix=API_V1)     # /sessions/{id}/recording
 app.include_router(qna.router, prefix=API_V1)            # /sessions/{id}/qna/generate
-app.include_router(reports.router, prefix=API_V1)         # /sessions/{id}/report, /users/me/report/growth
+app.include_router(reports.router, prefix=API_V1)        # /sessions/{id}/report, /users/me/report/growth
+app.include_router(users.router, prefix=API_V1)           # /users/me*
 
 
 @app.get("/health", tags=["meta"])
