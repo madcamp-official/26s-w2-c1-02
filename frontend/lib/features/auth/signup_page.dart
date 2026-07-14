@@ -66,7 +66,8 @@ class _SignupPageState extends State<SignupPage> {
             children: [
               _field(_name, '이름'),
               _field(_username, '아이디'),
-              _field(_password, '비밀번호', obscure: true),
+              _field(_password, '비밀번호',
+                  obscure: true, helper: '8자 이상 입력해주세요'),
               _field(_passwordConfirm, '비밀번호 확인', obscure: true),
               Row(
                 children: [
@@ -106,13 +107,14 @@ class _SignupPageState extends State<SignupPage> {
   }
 
   Widget _field(TextEditingController c, String hint,
-      {bool obscure = false, double bottom = 12}) {
+      {bool obscure = false, double bottom = 12, String? helper}) {
     return Padding(
       padding: EdgeInsets.only(bottom: bottom),
       child: TextField(
         controller: c,
         obscureText: obscure,
-        decoration: InputDecoration(hintText: hint),
+        // helperText는 입력 전부터 항상 표시 — 비밀번호 8~128자 제약(auth 스키마) 안내용.
+        decoration: InputDecoration(hintText: hint, helperText: helper),
       ),
     );
   }
