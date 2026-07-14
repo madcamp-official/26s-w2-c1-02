@@ -41,6 +41,7 @@ class MockBackend implements HttpBackend {
     'unverified': 'unverified@rehearsal.io',
   };
   final Set<String> _unverifiedEmails = {'unverified@rehearsal.io'};
+  final Map<String, int> _verifyAttempts = {}; // 이메일별 오입력 횟수 (5회 소진)
 
   static const _me = {
     'id': 'usr_1',
@@ -105,7 +106,9 @@ class MockBackend implements HttpBackend {
     if (m == 'POST' && path == '/auth/signup') return _signup(r);
     if (m == 'POST' && path == '/auth/email/verify') return _verifyEmail(r);
     if (m == 'POST' && path == '/auth/email/verify-request') {
-      // 유저가 없어도·이미 인증돼도 항상 204 (§9 — 계정 존재 여부 노출 방지)
+      // 재발송 = 새 코드 발급 → 오입력 카운터 리셋. 유저가 없어도·이미
+      // 인증돼도 항상 204 (§9 — 계정 존재 여부 노출 방지)
+      _verifyAttempts.remove(r.jsonBody?['email'] as String? ?? '');
       return const BackendResponse(statusCode: 204);
     }
     if (m == 'POST' && path == '/auth/refresh') return _refresh(r);
@@ -349,15 +352,21 @@ class MockBackend implements HttpBackend {
   }
 
   BackendResponse _verifyEmail(BackendRequest r) {
-    final email = r.jsonBody?['email'] as String?;
+    final email = r.jsonBody?['email'] as String? ?? '';
     final code = r.jsonBody?['code'] as String?;
     if (code == '111111') {
       // 매직 코드 — 만료 시나리오 UI(재발송 강조) 검증용. 실서버는 10분 TTL로 발생.
       return _err(400, 'CODE_EXPIRED', '코드가 만료됐어요');
     }
+    // 5회 오입력 소진 (§4-2) — attempt 검사가 대조보다 먼저(실서버와 동일 순서).
+    if ((_verifyAttempts[email] ?? 0) >= 5) {
+      return _err(400, 'CODE_EXPIRED', '코드가 만료됐어요 (5회 초과)');
+    }
     if (code != verifyCode) {
+      _verifyAttempts[email] = (_verifyAttempts[email] ?? 0) + 1;
       return _err(400, 'INVALID_CODE', '코드가 올바르지 않아요');
     }
+    _verifyAttempts.remove(email);
     _unverifiedEmails.remove(email); // 멱등 — 이미 인증된 이메일도 200 (§9)
     return _ok({'email_verified': true});
   }

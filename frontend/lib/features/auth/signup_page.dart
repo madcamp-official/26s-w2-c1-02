@@ -2,13 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/network/api_client.dart';
 import '../../core/theme/app_colors.dart';
 import '../../state/auth_controller.dart';
 import '../common/app_back_button.dart';
 import '../common/responsive_page.dart';
+import 'verify_code_section.dart';
 
-/// 회원가입 (와이어프레임 a2). Step 1: 폼 골격 + mock 가입.
-/// 이메일 인증코드 실발송은 백엔드(Step 4, 우선순위 '선택') 이후.
+/// 회원가입 (와이어프레임 a2) — 2단계.
+/// ① 가입 폼 → signup 201 (백엔드가 인증코드 발송)
+/// ② 같은 화면에서 6자리 코드 입력(10분 만료·5회 소진·재발송 60초 쿨다운)
+///    → verify 200 → 로그인 화면으로.
 class SignupPage extends StatefulWidget {
   const SignupPage({super.key});
 
@@ -23,6 +27,9 @@ class _SignupPageState extends State<SignupPage> {
   final _passwordConfirm = TextEditingController();
   final _email = TextEditingController();
   bool _submitting = false;
+
+  /// 가입 성공한 이메일 — null이 아니면 코드 입력 단계(②)를 표시한다.
+  String? _pendingEmail;
 
   @override
   void dispose() {
@@ -48,9 +55,17 @@ class _SignupPageState extends State<SignupPage> {
             email: email,
           );
       if (!mounted) return;
-      // 가입(201)이 인증코드를 발송하므로 곧바로 코드 입력 화면으로 (§8-1).
-      // send=1 없이 진입 — 방금 발송된 코드를 그대로 쓴다.
-      context.go('/verify-email?email=${Uri.encodeQueryComponent(email)}');
+      // 가입(201) = 인증코드 발송됨 — 같은 화면에서 코드 입력 단계로 전환.
+      setState(() => _pendingEmail = email);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      final msg = switch (e.code) {
+        'USERNAME_TAKEN' => '이미 사용 중인 아이디예요',
+        'EMAIL_TAKEN' => '이미 가입된 이메일이에요',
+        _ => e.message ?? '가입에 실패했어요. 잠시 후 다시 시도해주세요',
+      };
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(msg)));
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -59,37 +74,60 @@ class _SignupPageState extends State<SignupPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(leading: const AppBackButton(fallbackLocation: '/login'), title: const Text('회원가입')),
+      appBar: AppBar(
+          leading: const AppBackButton(fallbackLocation: '/login'),
+          title: Text(_pendingEmail == null ? '회원가입' : '이메일 인증')),
       body: SafeArea(
         child: ResponsivePage(
-          child: ListView(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            children: [
-              _field(_name, '이름'),
-              _field(_username, '아이디'),
-              _field(_password, '비밀번호',
-                  obscure: true, helper: '8자 이상 입력해주세요'),
-              _field(_passwordConfirm, '비밀번호 확인', obscure: true),
-              // "인증요청" 버튼 없음 — 가입 자체가 인증코드를 발송한다 (§8-1).
-              _field(_email, '이메일',
-                  bottom: 0, helper: '가입하면 이 주소로 인증코드가 발송돼요'),
-              const SizedBox(height: 24),
-              SizedBox(
-                height: 56,
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  onPressed: _submitting ? null : _submit,
-                  child: Text(_submitting ? '가입 중…' : '가입하기'),
-                ),
-              ),
-            ],
-          ),
+          child: _pendingEmail == null ? _signupForm() : _verifyStep(),
         ),
       ),
+    );
+  }
+
+  /// ① 가입 폼.
+  Widget _signupForm() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      children: [
+        _field(_name, '이름'),
+        _field(_username, '아이디'),
+        _field(_password, '비밀번호', obscure: true, helper: '8자 이상 입력해주세요'),
+        _field(_passwordConfirm, '비밀번호 확인', obscure: true),
+        // "인증요청" 버튼 없음 — 가입 자체가 인증코드를 발송한다 (§8-1).
+        _field(_email, '이메일', bottom: 0, helper: '가입하면 이 주소로 인증코드가 발송돼요'),
+        const SizedBox(height: 24),
+        SizedBox(
+          height: 56,
+          child: FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+            onPressed: _submitting ? null : _submit,
+            child: Text(_submitting ? '가입 중…' : '가입하기'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// ② 인증코드 입력 — 가입이 발송한 코드를 이 화면에서 바로 입력한다.
+  Widget _verifyStep() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      children: [
+        VerifyCodeSection(
+          email: _pendingEmail!,
+          sendOnInit: false, // 가입(201)이 방금 발송 — 재발송 쿨다운만 시작됨
+          onVerified: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('인증 완료! 로그인해주세요')));
+            context.go('/login');
+          },
+        ),
+      ],
     );
   }
 

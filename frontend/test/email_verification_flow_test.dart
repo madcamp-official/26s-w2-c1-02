@@ -49,6 +49,27 @@ void main() {
     expect(tokens.accessToken, isNotEmpty);
   });
 
+  test('5회 오입력 → 소진(CODE_EXPIRED), 재발송으로 복구 (§4-2)', () async {
+    await signup('t@rehearsal.io');
+    for (var i = 0; i < 5; i++) {
+      await expectLater(
+        repo.verifyEmail('t@rehearsal.io', '999999'),
+        throwsA(isA<ApiException>()
+            .having((e) => e.code, 'code', 'INVALID_CODE')),
+      );
+    }
+    // 소진 후엔 정답이어도 CODE_EXPIRED (attempt 검사가 대조보다 먼저)
+    await expectLater(
+      repo.verifyEmail('t@rehearsal.io', MockBackend.verifyCode),
+      throwsA(isA<ApiException>().having((e) => e.code, 'code', 'CODE_EXPIRED')),
+    );
+    // 재발송 = 새 코드 → 카운터 리셋 → 정답 통과
+    await repo.requestEmailVerification('t@rehearsal.io');
+    await repo.verifyEmail('t@rehearsal.io', MockBackend.verifyCode);
+    final tokens = await repo.login(username: 'verify_t', password: 'pw-12345678');
+    expect(tokens.accessToken, isNotEmpty);
+  });
+
   test('고정 시드 unverified 유저는 가입 없이 403 경로 재현', () async {
     await expectLater(
       repo.login(username: 'unverified', password: 'x'),

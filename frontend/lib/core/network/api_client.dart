@@ -174,16 +174,20 @@ class ApiClient {
 }
 
 class ApiException implements Exception {
-  ApiException(this.statusCode, this.code, this.message);
+  ApiException(this.statusCode, this.code, this.message, {this.details});
 
   final int statusCode;
   final String? code;
   final String? message;
 
+  /// 서버가 주는 부가 정보 (예: 429의 retry_after_seconds).
+  final Map<String, dynamic>? details;
+
   factory ApiException.fromResponse(BackendResponse res) => ApiException(
         res.statusCode,
         res.errorCode,
         res.errorMessage ?? '요청에 실패했어요.',
+        details: res.errorDetails,
       );
 
   @override

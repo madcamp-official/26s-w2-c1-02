@@ -69,6 +69,20 @@ class BackendResponse {
     }
     return null;
   }
+
+  /// 에러 응답 `{error: {details: {...}}}`에서 details 추출.
+  /// 예: 429 RATE_LIMITED의 `retry_after_seconds` (재발송 쿨다운 안내).
+  Map<String, dynamic>? get errorDetails {
+    final j = json;
+    if (j is Map<String, dynamic>) {
+      final err = j['error'];
+      if (err is Map<String, dynamic>) {
+        final details = err['details'];
+        if (details is Map<String, dynamic>) return details;
+      }
+    }
+    return null;
+  }
 }
 
 /// 실서버 백엔드 (Mock-off 전환 시 사용).
