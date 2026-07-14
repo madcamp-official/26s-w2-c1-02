@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 
 import '../data/models/app_user.dart';
-import '../data/models/enums.dart';
 import '../data/repositories/auth_repository.dart';
 
 /// 로그인 상태 보관 + go_router redirect의 refreshListenable.
@@ -20,12 +19,6 @@ class AuthController extends ChangeNotifier {
   Future<void> login({required String username, required String password}) =>
       _guard(() async {
         final tokens = await _repo.login(username: username, password: password);
-        _user = tokens.user;
-      });
-
-  Future<void> loginWithSocial(SocialProvider provider) => _guard(() async {
-        // 실제 OAuth SDK 연동 전까지 id_token은 mock 값.
-        final tokens = await _repo.loginWithSocial(provider, 'mock-id-token');
         _user = tokens.user;
       });
 

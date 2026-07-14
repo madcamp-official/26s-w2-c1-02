@@ -102,7 +102,6 @@ class MockBackend implements HttpBackend {
 
     // ---- 인증 불필요 엔드포인트 ----
     if (m == 'POST' && path == '/auth/login') return _login(r);
-    if (m == 'POST' && path.startsWith('/auth/login/social/')) return _login(r);
     if (m == 'POST' && path == '/auth/signup') return _signup(r);
     if (m == 'POST' && path == '/auth/email/verify') return _verifyEmail(r);
     if (m == 'POST' && path == '/auth/email/verify-request') {

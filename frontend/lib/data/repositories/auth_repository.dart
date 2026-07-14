@@ -1,7 +1,6 @@
 import '../../core/network/api_client.dart';
 import '../models/app_user.dart';
 import '../models/auth.dart';
-import '../models/enums.dart';
 
 /// 인증 리포지토리 — ApiClient(백엔드 추상화) 경유 단일 구현.
 /// Mock/실서버 전환은 백엔드 주입으로 결정되므로 별도 Mock 클래스가 없다.
@@ -15,9 +14,6 @@ class AuthRepository {
     required String password,
   }) =>
       _api.login('/auth/login', {'username': username, 'password': password});
-
-  Future<AuthTokens> loginWithSocial(SocialProvider provider, String idToken) =>
-      _api.login('/auth/login/social/${provider.wire}', {'id_token': idToken});
 
   Future<void> signup({
     required String name,

@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 
 import '../../core/network/api_client.dart';
 import '../../core/theme/app_colors.dart';
-import '../../data/models/enums.dart';
 import '../../state/auth_controller.dart';
 import '../common/responsive_page.dart';
 
@@ -52,17 +51,6 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
     if (mounted && auth.isLoggedIn) context.go('/');
-  }
-
-  Future<void> _loginGoogle() async {
-    final auth = context.read<AuthController>();
-    await auth.loginWithSocial(SocialProvider.google);
-    if (mounted && auth.isLoggedIn) context.go('/');
-  }
-
-  void _notSupported(String name) {
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$name 로그인은 이번 범위에서 자리만 있어요 (구글만 지원 예정)')));
   }
 
   @override
@@ -127,18 +115,6 @@ class _LoginPageState extends State<LoginPage> {
                     _link('회원가입', () => context.push('/signup')),
                   ],
                 ),
-                const SizedBox(height: 24),
-                _SocialButton(
-                    label: '구글로 로그인',
-                    onTap: loading ? null : _loginGoogle),
-                const SizedBox(height: 10),
-                _SocialButton(
-                    label: '카카오로 로그인 (자리만)',
-                    onTap: () => _notSupported('카카오')),
-                const SizedBox(height: 10),
-                _SocialButton(
-                    label: '네이버로 로그인 (자리만)',
-                    onTap: () => _notSupported('네이버')),
                 const SizedBox(height: 32),
               ],
             ),
@@ -159,25 +135,3 @@ class _LoginPageState extends State<LoginPage> {
       );
 }
 
-class _SocialButton extends StatelessWidget {
-  const _SocialButton({required this.label, this.onTap});
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      height: 50,
-      child: TextButton(
-        style: TextButton.styleFrom(
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.textPrimary,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-        onPressed: onTap,
-        child: Text(label, style: const TextStyle(fontSize: 14)),
-      ),
-    );
-  }
-}
