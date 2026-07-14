@@ -14,11 +14,15 @@ import '../../state/session_controller.dart';
 import '../common/app_back_button.dart';
 import '../common/responsive_page.dart';
 
-/// 발표중 (와이어프레임 e1) — 실제 마이크 녹음 + 청크 파이프라인.
+/// 발표중 (와이어프레임 e1) — 실제 마이크 녹음 → 일괄 업로드.
 ///
 /// - 타이머는 클라이언트 권위 (spec A9)
-/// - 녹음 중 60초+4초 겹침 WAV 청크를 순차 업로드 (spec §4.3.1)
-/// - 발표 마치기 → 꼬리 청크 + 재생용 전체 파일 complete 업로드 → STT 폴링
+/// - 녹음 중 [PcmChunker]로 전체 WAV만 축적 (청크 전송은 하지 않음)
+/// - 발표 마치기 → 전체 WAV를 `POST /recording` 단발 업로드 → STT 폴링
+///
+/// §0.8 합의: 데모까지는 일괄 업로드(A8) 하나로 수렴한다. 실시간 청크 파이프라인
+/// (`/recording/chunks`·`/recording/complete`)은 후순위 순수 최적화로 §4.3.1에
+/// draft 보존 — 리포지토리·Mock 계약은 유지하되 이 화면에서는 호출하지 않는다.
 class PresentingPage extends StatefulWidget {
   const PresentingPage({super.key, required this.sessionId});
   final String sessionId;
@@ -39,11 +43,6 @@ class _PresentingPageState extends State<PresentingPage> {
 
   _MicState _mic = _MicState.checking;
   RecorderService? _recorder; // 실사용 중인 녹음기 (실물 또는 Fake)
-
-  // 청크 업로드 직렬화 큐 (순서 보장 — infra 제약 2)
-  Future<void> _uploadQueue = Future.value();
-  int _chunksSent = 0;
-  int _chunksFailed = 0;
 
   @override
   void initState() {
@@ -79,26 +78,18 @@ class _PresentingPageState extends State<PresentingPage> {
     }
     _recorder = recorder;
     _startedAt = DateTime.now();
-    unawaited(
-        context.read<SessionRepository>().startRecording(widget.sessionId));
+    // §0.8: 실시간 `recording/start` 표시는 청크 파이프라인용이었으므로 호출하지 않는다.
+    // 일괄 업로드는 `POST /recording`이 draft → transcribing 전이를 직접 수행.
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() => _elapsedSeconds++);
     });
     setState(() => _mic = _MicState.recording);
   }
 
-  /// 청크 업로드 — 실패해도 발표는 계속 (complete의 전체 파일이 안전망).
-  void _enqueueChunk(PcmChunk chunk) {
-    final repo = context.read<SessionRepository>();
-    _uploadQueue = _uploadQueue.then((_) async {
-      try {
-        await repo.uploadRecordingChunk(widget.sessionId, chunk);
-        if (mounted) setState(() => _chunksSent++);
-      } catch (_) {
-        if (mounted) setState(() => _chunksFailed++);
-      }
-    });
-  }
+  /// §0.8: 일괄 업로드로 수렴 — 청크는 전송하지 않는다(no-op). [PcmChunker]는
+  /// 전체 WAV 축적용으로만 돌고, onChunk 콜백은 청크 계약 revival용으로 남겨둔다.
+  /// (§4.3.1을 살릴 때 여기서 uploadRecordingChunk 직렬 큐를 복구)
+  void _enqueueChunk(PcmChunk chunk) {}
 
   Future<void> _finish() async {
     final recorder = _recorder;
@@ -109,17 +100,16 @@ class _PresentingPageState extends State<PresentingPage> {
     try {
       final result = await recorder.stop();
       _recorder = null;
-      await _uploadQueue; // 남은 청크 전송 완료 대기 (마지막 꼬리 포함)
 
       if (!mounted) return;
-      await context.read<SessionRepository>().completeRecording(
+      // §0.8: 실시간 모드도 일괄 업로드로 수렴 — 전체 WAV 1회 전송.
+      await context.read<SessionRepository>().uploadRecording(
             widget.sessionId,
             fileName: result.fileName,
             bytes: result.wavBytes,
-            totalChunks: result.chunkCount,
             startedAt: _startedAt ?? DateTime.now(),
             endedAt: DateTime.now(),
-            durationSeconds: result.durationSeconds,
+            durationSeconds: result.durationSeconds.round(),
           );
       if (mounted) {
         context.pushReplacement('/sessions/${widget.sessionId}/processing');
@@ -242,16 +232,6 @@ class _PresentingPageState extends State<PresentingPage> {
             const SizedBox(width: 8),
             const Text('발표 녹음 중',
                 style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
-            if (_chunksSent > 0) ...[
-              const SizedBox(width: 10),
-              Text('· 전송된 청크 $_chunksSent개',
-                  style: const TextStyle(
-                      fontSize: 12, color: AppColors.textSecondary)),
-            ],
-            if (_chunksFailed > 0)
-              Text(' (실패 $_chunksFailed — 종료 시 전체 파일로 복구)',
-                  style:
-                      const TextStyle(fontSize: 11, color: AppColors.danger)),
           ],
         ),
         const SizedBox(height: 8),
