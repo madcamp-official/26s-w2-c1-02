@@ -183,9 +183,18 @@ class _QuestionViewState extends State<_QuestionView> {
       return;
     }
     setState(() => _phase = _Phase.playing);
-    await _player.play(url);
+    try {
+      await _player.play(url);
+    } catch (e) {
+      // 재생 실패(예: iOS -1002 unsupported URL, 네트워크 오류)에도 답변 흐름은
+      // 막히면 안 된다. 음성 없이 질문 텍스트로 답변을 이어가게 한다.
+      if (kDebugMode) debugPrint('TTS 재생 실패: $e');
+      if (mounted && _phase == _Phase.playing) {
+        _snack('질문 음성을 재생하지 못했어요. 질문을 읽고 답변해주세요.');
+      }
+    }
     if (!mounted || _phase != _Phase.playing) return; // 중단/다시듣기/화면 이탈
-    _awaitAnswerStart(); // 재생 완료 → 답변 시작 대기(30초)
+    _awaitAnswerStart(); // 재생 완료(또는 실패) → 답변 시작 대기(30초)
   }
 
   /// 질문 재생 후 30초 카운트다운. 사용자가 답변을 시작하면 멈추고,
