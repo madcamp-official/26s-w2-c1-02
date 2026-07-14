@@ -33,7 +33,10 @@ class Settings(BaseSettings):
     # LLM 제공자 선택 (mock | gemini)
     llm_provider: str = "mock"
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    # 버전을 고정하면 구글이 해당 모델을 "no longer available to new users"로 게이팅할 때
+    # 404로 질문 생성이 전면 실패한다(gemini-2.5-flash가 그렇게 막혀 운영 장애 발생).
+    # 항상 사용 가능한 최신 flash 별칭을 기본으로 둔다.
+    gemini_model: str = "gemini-flash-latest"
     # Vertex AI 엔드포인트 사용 여부. AI Studio 무료 키도 이제 "AQ." 형식으로 발급되어
     # 키 접두사로 경로를 추정할 수 없다 — 무료(Gemini API) 키면 false(기본), Vertex 키만 true.
     gemini_use_vertex: bool = False
