@@ -110,6 +110,14 @@ class MockBackend implements HttpBackend {
     }
     if (m == 'POST' && path == '/auth/refresh') return _refresh(r);
     if (m == 'GET' && _match(path, r'^/invites/([^/]+)$') != null) {
+      final code = _match(path, r'^/invites/([^/]+)$')![0];
+      // 매직 코드 — 초대코드 참여 에러 UI(§11-2) 검증용.
+      if (code == 'BADBADBA') {
+        return _err(404, 'INVITE_NOT_FOUND', '존재하지 않는 코드예요');
+      }
+      if (code == 'EXPIREDX') {
+        return _err(410, 'INVITE_EXPIRED', '만료된 초대예요');
+      }
       return _ok({
         'team_name': 'teamname1',
         'member_count': 2,
