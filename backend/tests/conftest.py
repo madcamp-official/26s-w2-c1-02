@@ -11,3 +11,5 @@ app 모듈 임포트 전에 실행돼야 하므로 여기(conftest 최상단)에
 import os
 
 os.environ.setdefault("LLM_PROVIDER", "mock")
+# 이메일도 동일 규율 — 테스트가 실 SMTP를 때리지 않게 mock 고정 (email-verification-plan 작업 6)
+os.environ.setdefault("EMAIL_PROVIDER", "mock")
