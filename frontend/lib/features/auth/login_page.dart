@@ -17,8 +17,8 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  final _usernameController = TextEditingController(text: 'junseo');
-  final _pwController = TextEditingController(text: 'password');
+  final _usernameController = TextEditingController();
+  final _pwController = TextEditingController();
 
   @override
   void dispose() {
