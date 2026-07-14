@@ -104,11 +104,13 @@ class TestList:
         tid, _ = team_ctx
         client.post(f"/api/v1/teams/{tid}/sessions", json=_body(name="A"), headers=_auth("sesr_owner"))
         client.post(f"/api/v1/teams/{tid}/sessions", json=_body(name="B"), headers=_auth("sesr_owner"))
-        rows = client.get(f"/api/v1/teams/{tid}/sessions", headers=_auth("sesr_member")).json()
+        rows = client.get(f"/api/v1/teams/{tid}/sessions", headers=_auth("sesr_member")).json()["items"]
         assert [r["name"] for r in rows] == ["B", "A"]  # created_at DESC
-        assert set(rows[0]) == {"id", "name", "status", "mode", "persona_count",
-                                "question_count", "time_limit_minutes", "created_at"}
-        assert rows[0]["persona_count"] == 2
+        # 항목 = 상세와 동일 형태 (FE Session.fromJson이 team_id·owner_id·personas 요구)
+        assert set(rows[0]) == {"id", "team_id", "owner_id", "name", "status", "personas",
+                                "question_count", "time_limit_minutes", "mode",
+                                "material", "recording", "transcript", "report", "created_at"}
+        assert len(rows[0]["personas"]) == 2
 
     def test_outsider_list_404(self, team_ctx):
         tid, _ = team_ctx
@@ -255,7 +257,7 @@ class TestLifecycle:
         assert created.json()["status"] == "draft"
 
         # 2) 목록에 등장
-        listed = client.get(f"/api/v1/teams/{tid}/sessions", headers=H).json()
+        listed = client.get(f"/api/v1/teams/{tid}/sessions", headers=H).json()["items"]
         assert any(s["id"] == sid for s in listed)
 
         # 3) 상세 조회
@@ -270,7 +272,7 @@ class TestLifecycle:
         # 5) 삭제 → 이후 조회 404, 목록에서도 사라짐
         assert client.delete(f"/api/v1/sessions/{sid}", headers=H).status_code == 204
         assert client.get(f"/api/v1/sessions/{sid}", headers=H).status_code == 404
-        listed2 = client.get(f"/api/v1/teams/{tid}/sessions", headers=H).json()
+        listed2 = client.get(f"/api/v1/teams/{tid}/sessions", headers=H).json()["items"]
         assert all(s["id"] != sid for s in listed2)
 
 

@@ -112,19 +112,19 @@ class TestListTeams:
     def test_lists_only_my_teams(self, two_users):
         client.post(TEAMS_URL, json={"name": "A의팀"}, headers=_auth("tmtest_a"))
         client.post(TEAMS_URL, json={"name": "B의팀"}, headers=_auth("tmtest_b"))
-        a_list = client.get(TEAMS_URL, headers=_auth("tmtest_a")).json()
+        a_list = client.get(TEAMS_URL, headers=_auth("tmtest_a")).json()["items"]
         names = {t["name"] for t in a_list}
         assert "A의팀" in names and "B의팀" not in names
 
     def test_card_has_preview_and_count(self, two_users):
         client.post(TEAMS_URL, json={"name": "미리보기팀"}, headers=_auth("tmtest_a"))
-        card = client.get(TEAMS_URL, headers=_auth("tmtest_a")).json()[0]
+        card = client.get(TEAMS_URL, headers=_auth("tmtest_a")).json()["items"][0]
         assert set(card.keys()) == {"id", "name", "session_count", "members_preview"}
         assert card["members_preview"] == "리더A"  # 멤버 1명
         assert card["session_count"] == 0
 
     def test_empty_when_no_teams(self, two_users):
-        assert client.get(TEAMS_URL, headers=_auth("tmtest_b")).json() == []
+        assert client.get(TEAMS_URL, headers=_auth("tmtest_b")).json() == {"items": []}
 
 
 class TestGetTeam:
@@ -247,7 +247,7 @@ class TestSessionCount:
         _add_session(tid, two_users["a"], "발표1")
         _add_session(tid, two_users["a"], "발표2")
 
-        card = client.get(TEAMS_URL, headers=_auth("tmtest_a")).json()[0]
+        card = client.get(TEAMS_URL, headers=_auth("tmtest_a")).json()["items"][0]
         assert card["session_count"] == 2
         detail = client.get(f"{TEAMS_URL}/{tid}", headers=_auth("tmtest_a")).json()
         assert detail["session_count"] == 2
@@ -286,7 +286,7 @@ class TestMemberListing:
         tid = client.post(TEAMS_URL, json={"name": "미리보기2"},
                           headers=_auth("tmtest_a")).json()["id"]
         _add_member(tid, two_users["b"])
-        card = next(c for c in client.get(TEAMS_URL, headers=_auth("tmtest_a")).json()
+        card = next(c for c in client.get(TEAMS_URL, headers=_auth("tmtest_a")).json()["items"]
                     if c["id"] == tid)
         assert card["members_preview"] == "리더A, 타인B"
 
@@ -295,7 +295,7 @@ class TestMemberListing:
         tid = client.post(TEAMS_URL, json={"name": "공유팀"},
                           headers=_auth("tmtest_a")).json()["id"]
         _add_member(tid, two_users["b"])
-        assert tid in {t["id"] for t in client.get(TEAMS_URL, headers=_auth("tmtest_b")).json()}
+        assert tid in {t["id"] for t in client.get(TEAMS_URL, headers=_auth("tmtest_b")).json()["items"]}
 
 
 class TestNameHandling:
@@ -336,7 +336,7 @@ class TestListOrdering:
         h = _auth("tmtest_a")
         client.post(TEAMS_URL, json={"name": "먼저"}, headers=h)
         client.post(TEAMS_URL, json={"name": "나중"}, headers=h)
-        names = [t["name"] for t in client.get(TEAMS_URL, headers=h).json()]
+        names = [t["name"] for t in client.get(TEAMS_URL, headers=h).json()["items"]]
         assert names.index("나중") < names.index("먼저")  # created_at DESC (§8.3)
 
 
@@ -436,7 +436,7 @@ class TestRemoveMember:
         client.delete(f"{TEAMS_URL}/{tid}/members/{two_users['b']}",
                       headers=_auth("tmtest_a"))
         # 쫓겨난 B는 더 이상 팀을 못 봄 (목록에도 없고 상세는 404)
-        assert tid not in {t["id"] for t in client.get(TEAMS_URL, headers=_auth("tmtest_b")).json()}
+        assert tid not in {t["id"] for t in client.get(TEAMS_URL, headers=_auth("tmtest_b")).json()["items"]}
         assert client.get(f"{TEAMS_URL}/{tid}", headers=_auth("tmtest_b")).status_code == 404
 
     def test_non_leader_member_forbidden(self, two_users):
@@ -544,7 +544,7 @@ class TestLeaveNonLeader:
                           headers=_auth("tmtest_a")).json()["id"]
         _add_member(tid, two_users["b"])
         _leave(tid, "tmtest_b")
-        assert tid not in {t["id"] for t in client.get(TEAMS_URL, headers=_auth("tmtest_b")).json()}
+        assert tid not in {t["id"] for t in client.get(TEAMS_URL, headers=_auth("tmtest_b")).json()["items"]}
         assert client.get(f"{TEAMS_URL}/{tid}", headers=_auth("tmtest_b")).status_code == 404
 
     def test_outsider_404(self, two_users):

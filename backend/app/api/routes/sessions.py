@@ -27,9 +27,10 @@ from app.db.session import get_db
 from app.schemas.session import (
     MaterialStatusOut,
     RecordingStatusOut,
-    SessionCard,
+    ReportStatusOut,
     SessionCreateRequest,
     SessionDetail,
+    SessionListOut,
     SessionUpdateRequest,
     TranscriptStatusOut,
 )
@@ -39,24 +40,18 @@ router = APIRouter(tags=["sessions"])
 
 # ── 목록 · 생성 (팀 스코프) ───────────────────────────────────────────
 
-@router.get("/teams/{team_id}/sessions", response_model=list[SessionCard])
+@router.get("/teams/{team_id}/sessions", response_model=SessionListOut)
 def list_sessions(
     team: models.Team = Depends(require_team_member),
     db: Session = Depends(get_db),
-) -> list[SessionCard]:
+) -> SessionListOut:
+    """세션 목록 (멤버). 항목은 상세와 동일 형태 — FE가 풀 Session으로 파싱한다."""
     rows = db.scalars(
         select(models.RehearsalSession)
         .where(models.RehearsalSession.team_id == team.id)
         .order_by(models.RehearsalSession.created_at.desc())  # sessions_team_idx
     ).all()
-    return [
-        SessionCard(
-            id=s.id, name=s.name, status=s.status, mode=s.mode,
-            persona_count=len(s.personas), question_count=s.question_count,
-            time_limit_minutes=s.time_limit_minutes, created_at=s.created_at,
-        )
-        for s in rows
-    ]
+    return SessionListOut(items=[_to_detail(s, db) for s in rows])
 
 
 @router.post("/teams/{team_id}/sessions", response_model=SessionDetail, status_code=201)
@@ -149,10 +144,11 @@ def _collect_storage_keys(session_id: str, db: Session) -> list[str]:
 def _to_detail(session: models.RehearsalSession, db: Session) -> SessionDetail:
     """세션 + 하위 리소스 상태 → SessionDetail (api-spec §4.1 형태).
 
-    audio_url은 storage_key에서 서명 URL로 파생(A10). report는 항상 null(A7)."""
+    audio_url은 storage_key에서 서명 URL로 파생(A10). report는 qna/end 전 null(A7)."""
     material = db.get(models.Material, session.id)
     recording = db.get(models.Recording, session.id)
     transcript = db.get(models.Transcript, session.id)
+    report = db.get(models.Report, session.id)
 
     material_out = None
     if material is not None:
@@ -178,5 +174,7 @@ def _to_detail(session: models.RehearsalSession, db: Session) -> SessionDetail:
         name=session.name, status=session.status, personas=session.personas,
         question_count=session.question_count, time_limit_minutes=session.time_limit_minutes,
         mode=session.mode, material=material_out, recording=recording_out,
-        transcript=transcript_out, created_at=session.created_at,
+        transcript=transcript_out,
+        report=ReportStatusOut(status=report.status) if report is not None else None,
+        created_at=session.created_at,
     )

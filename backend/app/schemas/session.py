@@ -100,6 +100,10 @@ class TranscriptStatusOut(BaseModel):
     status: AsyncStatus
 
 
+class ReportStatusOut(BaseModel):
+    status: AsyncStatus
+
+
 class TranscriptSegmentOut(BaseModel):
     ts: str      # "MM:SS" — 저장은 초 float, 응답 시 seconds_to_ts로 변환 (§4.3)
     text: str
@@ -118,7 +122,8 @@ class TranscriptDetail(BaseModel):
 class SessionDetail(BaseModel):
     """GET /sessions/{id} 상세 (api-spec §4.1 응답 예시와 필드 단위 일치).
 
-    material/recording/transcript는 아직 없으면 None. report는 qna 종료 전 항상 None(A7)."""
+    material/recording/transcript/report는 아직 없으면 None.
+    report는 qna/end 이후 {status}로 채워진다(A7)."""
 
     id: str
     team_id: str
@@ -132,18 +137,14 @@ class SessionDetail(BaseModel):
     material: MaterialStatusOut | None = None
     recording: RecordingStatusOut | None = None
     transcript: TranscriptStatusOut | None = None
-    report: None = None              # 리포트는 Step 4 — 종료 전엔 항상 null
+    report: ReportStatusOut | None = None
     created_at: datetime
 
 
-class SessionCard(BaseModel):
-    """GET /teams/{teamId}/sessions 목록 항목 (요약)."""
+class SessionListOut(BaseModel):
+    """GET /teams/{teamId}/sessions 응답 봉투 (api-spec §1.2: { items } — FE 계약).
 
-    id: str
-    name: str
-    status: SessionStatus
-    mode: SessionMode
-    persona_count: int
-    question_count: int
-    time_limit_minutes: int
-    created_at: datetime
+    항목은 상세와 동일 형태 — FE Session.fromJson(team_id·owner_id·personas 필수)과
+    mock 백엔드가 둘 다 상세 형태를 쓴다(§4.1 예시)."""
+
+    items: list[SessionDetail]

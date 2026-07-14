@@ -48,6 +48,12 @@ class TeamCard(BaseModel):
     members_preview: str  # "박준서, 이서진" — 탈퇴자는 '탈퇴한 사용자'
 
 
+class TeamListOut(BaseModel):
+    """GET /teams 응답 봉투 (api-spec §1.2: 목록은 { items } 형태 — FE 계약)."""
+
+    items: list[TeamCard]
+
+
 class TeamMemberInfo(BaseModel):
     id: str
     name: str | None       # 탈퇴(익명화) 유저는 None
