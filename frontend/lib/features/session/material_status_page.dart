@@ -63,16 +63,16 @@ class MaterialStatusPage extends StatelessWidget {
                   else
                     _StatusCard(
                       info: m,
-                      // 스캔본 등 실패 → 새 PDF 재선택 후 재업로드 (spec §4.2)
+                      // 스캔본 등 실패 → 새 자료 재선택 후 재업로드 (spec §4.2)
                       onRetry: () async {
                         final picked = await FilePicker.platform.pickFiles(
                           type: FileType.custom,
-                          allowedExtensions: ['pdf'],
+                          allowedExtensions: FileConstraints.materialExtensions,
                           withData: true,
                         );
                         final file = picked?.files.single;
                         if (file == null || file.bytes == null) return;
-                        final error = FileConstraints.validatePdf(
+                        final error = FileConstraints.validateMaterial(
                           fileName: file.name,
                           sizeBytes: file.size,
                           bytes: file.bytes,
@@ -169,7 +169,7 @@ class _StatusCard extends StatelessWidget {
                   style: TextStyle(
                       color: AppColors.danger, fontWeight: FontWeight.w800))),
           title: info.error?.message ?? '텍스트를 읽을 수 없어요',
-          subtitle: '스캔본·이미지 PDF는 지원하지 않아요.',
+          subtitle: '스캔본·이미지 전용 자료(PDF·PPTX)는 지원하지 않아요.',
           extra: Align(
             alignment: Alignment.centerLeft,
             child: OutlinedButton(

@@ -17,7 +17,7 @@ import '../common/responsive_page.dart';
 
 /// 발표 만들기 (와이어프레임 d1) — spec §4.1 세션 생성.
 /// 진행 방식을 먼저 고르면 나머지 설정(질문자 성격·질문 개수·[제한시간])이
-/// fade-slide-in으로 나타난다. 실제 PDF 업로드(20MB/50p 검증, spec §1.3).
+/// fade-slide-in으로 나타난다. 실제 자료(PDF·PPTX) 업로드(20MB/50p 검증, spec §1.3).
 class CreateSessionPage extends StatefulWidget {
   const CreateSessionPage({super.key, required this.teamId, this.sessionId});
   final String teamId;
@@ -39,7 +39,7 @@ class _CreateSessionPageState extends State<CreateSessionPage> {
 
   /// 초기에는 진행 방식 미선택 → 선택해야 나머지 설정이 나타남.
   SessionMode? _mode;
-  PlatformFile? _pdf; // 선택된 발표 자료 (bytes 포함)
+  PlatformFile? _material; // 선택된 발표 자료 (bytes 포함)
   bool _submitting = false;
 
   @override
@@ -70,16 +70,16 @@ class _CreateSessionPageState extends State<CreateSessionPage> {
     _mode = s.mode; // 설정 섹션이 바로 보이도록
   }
 
-  Future<void> _pickPdf() async {
+  Future<void> _pickMaterial() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['pdf'],
+      allowedExtensions: FileConstraints.materialExtensions,
       withData: true, // 웹 호환: bytes로 받기
     );
     final file = result?.files.single;
     if (file == null || file.bytes == null) return;
 
-    final error = FileConstraints.validatePdf(
+    final error = FileConstraints.validateMaterial(
       fileName: file.name,
       sizeBytes: file.size,
       bytes: file.bytes,
@@ -88,7 +88,7 @@ class _CreateSessionPageState extends State<CreateSessionPage> {
       _snack(error);
       return;
     }
-    setState(() => _pdf = file);
+    setState(() => _material = file);
   }
 
   @override
@@ -132,13 +132,13 @@ class _CreateSessionPageState extends State<CreateSessionPage> {
           ? await ctrl.create(widget.teamId, req)
           : await ctrl.update(widget.teamId, id, req);
 
-      final pdf = _pdf;
-      if (pdf != null && mounted) {
-        // PDF 업로드(202) → 전처리 상태 폴링 화면으로.
+      final material = _material;
+      if (material != null && mounted) {
+        // 자료 업로드(202) → 전처리 상태 폴링 화면으로.
         await context.read<SessionRepository>().uploadMaterial(
               session.id,
-              fileName: pdf.name,
-              bytes: pdf.bytes!,
+              fileName: material.name,
+              bytes: material.bytes!,
             );
         if (!mounted) return;
         context.pushReplacement('/sessions/${session.id}/material');
@@ -192,13 +192,13 @@ class _CreateSessionPageState extends State<CreateSessionPage> {
               const SizedBox(height: 20),
 
               // 발표 자료 (선택)
-              const Text('발표 자료 (PDF · 선택)',
+              const Text('발표 자료 (PDF·PPTX · 선택)',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
-              _PdfPicker(
-                pdf: _pdf,
-                onTap: _pickPdf,
-                onClear: () => setState(() => _pdf = null),
+              _MaterialPicker(
+                file: _material,
+                onTap: _pickMaterial,
+                onClear: () => setState(() => _material = null),
               ),
               const SizedBox(height: 6),
               const Text('자료 없이 진행하면 발표 내용만으로 질문을 만들어요. (최대 20MB · 50페이지)',
@@ -410,13 +410,13 @@ class _PersonaChip extends StatelessWidget {
   }
 }
 
-class _PdfPicker extends StatelessWidget {
-  const _PdfPicker({
-    required this.pdf,
+class _MaterialPicker extends StatelessWidget {
+  const _MaterialPicker({
+    required this.file,
     required this.onTap,
     required this.onClear,
   });
-  final PlatformFile? pdf;
+  final PlatformFile? file;
   final VoidCallback onTap;
   final VoidCallback onClear;
 
@@ -430,23 +430,23 @@ class _PdfPicker extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
-              color: pdf != null ? AppColors.accent : AppColors.hint,
+              color: file != null ? AppColors.accent : AppColors.hint,
               width: 1.4),
-          color: pdf != null ? AppColors.accent.withValues(alpha: 0.08) : null,
+          color: file != null ? AppColors.accent.withValues(alpha: 0.08) : null,
         ),
         child: Center(
-          child: pdf == null
-              ? const Text('+ PDF를 업로드해주세요',
+          child: file == null
+              ? const Text('+ PDF·PPTX를 업로드해주세요',
                   style: TextStyle(color: AppColors.hint))
               : Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.picture_as_pdf,
+                    const Icon(Icons.description,
                         size: 20, color: AppColors.accent),
                     const SizedBox(width: 8),
                     Flexible(
                       child: Text(
-                        '${pdf!.name} · ${(pdf!.size / (1024 * 1024)).toStringAsFixed(1)}MB',
+                        '${file!.name} · ${(file!.size / (1024 * 1024)).toStringAsFixed(1)}MB',
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                             color: AppColors.accent,

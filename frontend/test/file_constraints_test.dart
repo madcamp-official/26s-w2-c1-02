@@ -4,28 +4,56 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:rehearsal/core/files/file_constraints.dart';
 
 void main() {
-  group('PDF 검증 (20MB · 50페이지)', () {
+  group('발표 자료 검증 (PDF·PPTX · 20MB · 50페이지)', () {
     test('정상 PDF 통과', () {
       final bytes = utf8.encode('%PDF-1.4 /Type /Page x /Type /Page');
       expect(
-        FileConstraints.validatePdf(
+        FileConstraints.validateMaterial(
             fileName: 'deck.pdf', sizeBytes: bytes.length, bytes: bytes),
         isNull,
       );
     });
 
-    test('확장자 아님 → 거부', () {
-      expect(
-        FileConstraints.validatePdf(fileName: 'deck.pptx', sizeBytes: 100),
-        contains('PDF'),
-      );
+    test('정상 PPTX 통과 (대문자 확장자 포함)', () {
+      for (final name in ['deck.pptx', 'DECK.PPTX']) {
+        expect(
+          FileConstraints.validateMaterial(fileName: name, sizeBytes: 1024),
+          isNull,
+          reason: name,
+        );
+      }
     });
 
-    test('20MB 초과 → 거부', () {
+    test('비허용 확장자 → 거부 (레거시 .ppt 포함)', () {
+      for (final name in ['notes.txt', 'deck.ppt', 'deck.key']) {
+        expect(
+          FileConstraints.validateMaterial(fileName: name, sizeBytes: 100),
+          contains('PDF·PPTX'),
+          reason: name,
+        );
+      }
+    });
+
+    test('20MB 초과 → 거부 (pdf·pptx 동일)', () {
+      for (final name in ['deck.pdf', 'deck.pptx']) {
+        expect(
+          FileConstraints.validateMaterial(
+              fileName: name, sizeBytes: 21 * 1024 * 1024),
+          contains('커요'),
+          reason: name,
+        );
+      }
+    });
+
+    test('PPTX는 bytes가 있어도 PDF 페이지 추정을 타지 않음', () {
+      // PDF 마커가 들어 있는 bytes라도 pptx면 페이지 추정 없이 통과해야 한다.
+      final misleading = utf8.encode(List.filled(51, '/Type /Page').join(' '));
       expect(
-        FileConstraints.validatePdf(
-            fileName: 'deck.pdf', sizeBytes: 21 * 1024 * 1024),
-        contains('커요'),
+        FileConstraints.validateMaterial(
+            fileName: 'deck.pptx',
+            sizeBytes: misleading.length,
+            bytes: misleading),
+        isNull,
       );
     });
 
@@ -40,7 +68,7 @@ void main() {
       final many = List.filled(51, '/Type /Page').join(' ');
       final bytes = utf8.encode('%PDF $many');
       expect(
-        FileConstraints.validatePdf(
+        FileConstraints.validateMaterial(
             fileName: 'big.pdf', sizeBytes: bytes.length, bytes: bytes),
         contains('페이지'),
       );

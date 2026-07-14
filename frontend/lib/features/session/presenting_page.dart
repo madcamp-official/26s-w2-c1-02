@@ -196,7 +196,7 @@ class _PresentingPageState extends State<PresentingPage> {
               borderRadius: BorderRadius.circular(8),
             ),
             alignment: Alignment.center,
-            child: Text('PDF 슬라이드 ($_slide)',
+            child: Text('슬라이드 ($_slide)',
                 style: const TextStyle(color: AppColors.textSecondary)),
           ),
         ),

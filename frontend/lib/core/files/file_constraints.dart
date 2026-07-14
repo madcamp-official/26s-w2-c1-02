@@ -5,10 +5,13 @@ import 'dart:convert';
 class FileConstraints {
   FileConstraints._();
 
-  static const int pdfMaxBytes = 20 * 1024 * 1024; // 20 MB
-  static const int pdfMaxPages = 50;
+  static const int materialMaxBytes = 20 * 1024 * 1024; // 20 MB
+  static const int materialMaxPages = 50;
   static const int audioMaxBytes = 200 * 1024 * 1024; // 200 MB
   static const int audioMaxSeconds = 60 * 60; // 60분
+
+  /// 업로드 허용 발표 자료 확장자 (레거시 .ppt는 서버 파서가 없어 미지원).
+  static const List<String> materialExtensions = ['pdf', 'pptx'];
 
   /// 업로드 허용 오디오 확장자 (webm은 v0.4-draft, 웹 녹음 폴백 산출물).
   static const List<String> audioExtensions = ['mp3', 'wav', 'm4a', 'webm'];
@@ -20,20 +23,24 @@ class FileConstraints {
 
   static String _mb(int bytes) => (bytes / (1024 * 1024)).toStringAsFixed(1);
 
-  /// PDF 검증. 통과하면 null, 실패하면 사용자 메시지 반환.
-  static String? validatePdf({
+  /// 발표 자료(PDF·PPTX) 검증. 통과하면 null, 실패하면 사용자 메시지 반환.
+  /// 페이지 수 추정은 PDF만 가능 — PPTX 슬라이드 수(50장 상한)는 서버가 검증.
+  static String? validateMaterial({
     required String fileName,
     required int sizeBytes,
     List<int>? bytes,
   }) {
-    if (_ext(fileName) != 'pdf') return 'PDF 파일만 업로드할 수 있어요';
-    if (sizeBytes > pdfMaxBytes) {
-      return 'PDF가 너무 커요 (${_mb(sizeBytes)}MB / 최대 ${_mb(pdfMaxBytes)}MB)';
+    final ext = _ext(fileName);
+    if (!materialExtensions.contains(ext)) {
+      return 'PDF·PPTX 파일만 업로드할 수 있어요';
     }
-    if (bytes != null) {
+    if (sizeBytes > materialMaxBytes) {
+      return '파일이 너무 커요 (${_mb(sizeBytes)}MB / 최대 ${_mb(materialMaxBytes)}MB)';
+    }
+    if (ext == 'pdf' && bytes != null) {
       final pages = estimatePdfPageCount(bytes);
-      if (pages != null && pages > pdfMaxPages) {
-        return '페이지가 너무 많아요 ($pages페이지 / 최대 $pdfMaxPages페이지)';
+      if (pages != null && pages > materialMaxPages) {
+        return '페이지가 너무 많아요 ($pages페이지 / 최대 $materialMaxPages페이지)';
       }
     }
     return null;

@@ -42,7 +42,7 @@ class SessionRepository {
 
   Future<void> deleteSession(String id) => _api.delete('/sessions/$id');
 
-  // ---- 발표 자료 (PDF) ----
+  // ---- 발표 자료 (PDF·PPTX) ----
 
   Future<void> uploadMaterial(
     String sessionId, {
