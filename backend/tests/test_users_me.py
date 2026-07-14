@@ -41,9 +41,8 @@ ENDPOINTS = [
 ]
 
 # 아직 미구현(501 골격)인 엔드포인트 — 구현되면 여기서 빼고 기능 테스트로 대체한다.
-# 작업 3: GET /me · 작업 4: PATCH /me 구현 완료 → 목록에서 제외.
+# 작업 3: GET /me · 작업 4: PATCH /me · 작업 5: PATCH /me/password 구현 완료.
 PENDING_ENDPOINTS = [
-    ("PATCH", PW_URL),
     ("DELETE", ME_URL),
 ]
 
@@ -66,9 +65,14 @@ def test_user():
         db.commit()
 
 
-def _token() -> str:
+def _login() -> dict:
+    """Native 로그인 → access·refresh 둘 다 본문으로 받는다 (X-Client-Platform: ios)."""
     return client.post("/api/v1/auth/login", json=CREDS,
-                       headers={"X-Client-Platform": "ios"}).json()["access_token"]
+                       headers={"X-Client-Platform": "ios"}).json()
+
+
+def _token() -> str:
+    return _login()["access_token"]
 
 
 def _expired_token(user_id: str) -> str:
@@ -280,6 +284,124 @@ class TestUpdateMe:
         # name이 되살아나지 않고 NULL로 유지된다
         with SessionLocal() as db:
             assert db.get(User, test_user["id"]).name is None
+
+
+class TestChangePassword:
+    """작업 5 — PATCH /users/me/password (비밀번호 변경) 기능 검증."""
+
+    NEW_PW = "new-strong-pw-9876"
+
+    def _body(self, **over) -> dict:
+        b = {"current_password": CREDS["password"], "new_password": self.NEW_PW}
+        b.update(over)
+        return b
+
+    def _login_status(self, password: str) -> int:
+        return client.post("/api/v1/auth/login",
+                           json={"username": CREDS["username"], "password": password},
+                           headers={"X-Client-Platform": "ios"}).status_code
+
+    def test_success_returns_204_and_switches_password(self, test_user):
+        res = _call("PATCH", PW_URL, headers=_auth(), json=self._body())
+        assert res.status_code == 204
+        assert res.content == b""              # 204 no-body 계약
+        assert self._login_status(self.NEW_PW) == 200          # 새 비번으로 로그인 OK
+        assert self._login_status(CREDS["password"]) == 401    # 옛 비번은 실패
+
+    def test_wrong_current_password_400_and_unchanged(self, test_user):
+        res = _call("PATCH", PW_URL, headers=_auth(),
+                    json=self._body(current_password="totally-wrong"))
+        assert res.status_code == 400
+        assert res.json()["error"]["code"] == "INVALID_CREDENTIALS"
+        # 비번은 바뀌지 않았다 — 기존 비번으로 여전히 로그인된다
+        assert self._login_status(CREDS["password"]) == 200
+
+    def test_revokes_all_refresh_tokens(self, test_user):
+        """비번 변경 → 변경 전 발급된 refresh 토큰은 무력화(refresh 시 401)."""
+        old_refresh = _login()["refresh_token"]
+        res = _call("PATCH", PW_URL, headers=_auth(), json=self._body())
+        assert res.status_code == 204
+        refreshed = client.post("/api/v1/auth/refresh",
+                                json={"refresh_token": old_refresh},
+                                headers={"X-Client-Platform": "ios"})
+        assert refreshed.status_code == 401
+
+    def test_social_only_account_400(self, test_user):
+        """로컬 비번이 없는(소셜 전용) 계정 → 400 NO_PASSWORD_SET."""
+        token = _token()  # password_hash NULL 만들기 전에 토큰 확보
+        with SessionLocal() as db:
+            db.execute(User.__table__.update().where(User.id == test_user["id"])
+                       .values(password_hash=None))
+            db.commit()
+        res = _call("PATCH", PW_URL, headers=_auth(token), json=self._body())
+        assert res.status_code == 400
+        assert res.json()["error"]["code"] == "NO_PASSWORD_SET"
+
+    def test_new_password_over_bcrypt_byte_limit_400(self, test_user):
+        """스키마(≤128자)는 통과하지만 bcrypt 72바이트 상한 초과(한글 30자=90바이트)
+        → 500이 아니라 400 PASSWORD_TOO_LONG (작업 1 감사 메모 실현).
+        해시 실패는 password_hash 대입 전에 raise되므로 기존 비번은 그대로."""
+        res = _call("PATCH", PW_URL, headers=_auth(), json=self._body(new_password="가" * 30))
+        assert res.status_code == 400
+        assert res.json()["error"]["code"] == "PASSWORD_TOO_LONG"
+        assert self._login_status(CREDS["password"]) == 200  # 옛 비번 그대로 유효
+
+    def test_anonymized_user_cannot_reset_password(self, test_user):
+        """탈퇴(익명화)된 유저가 유효 토큰으로 비번 변경해도 401 — get_current_user가
+        deleted_at으로 막아 password_hash를 되살리지 못한다(GET/PATCH와 대칭 방어)."""
+        token = _token()
+        with SessionLocal() as db:
+            db.execute(User.__table__.update().where(User.id == test_user["id"]).values(
+                username=None, password_hash=None, name=None, email=None,
+                deleted_at=datetime.now(timezone.utc),
+            ))
+            db.commit()
+        res = _call("PATCH", PW_URL, headers=_auth(token), json=self._body())
+        assert res.status_code == 401
+        with SessionLocal() as db:  # 되살아나지 않고 NULL 유지
+            assert db.get(User, test_user["id"]).password_hash is None
+
+    def test_other_users_refresh_not_revoked(self, test_user):
+        """내 비번 변경은 내 refresh만 폐기 — 다른 유저의 세션은 살아 있다
+        (revoke 쿼리의 user_id 필터 격리 확인)."""
+        # 두 번째 유저(umtest2) 생성 후 refresh 확보
+        client.post("/api/v1/auth/signup", json={
+            "name": "마이테스트2", "username": "umtest2_user",
+            "password": "um2-pass-12345", "email": "umtest2@test.io",
+        })
+        other_refresh = client.post("/api/v1/auth/login",
+            json={"username": "umtest2_user", "password": "um2-pass-12345"},
+            headers={"X-Client-Platform": "ios"}).json()["refresh_token"]
+        # 내(umtest) 비번 변경
+        assert _call("PATCH", PW_URL, headers=_auth(), json=self._body()).status_code == 204
+        # 다른 유저 refresh는 여전히 유효
+        r = client.post("/api/v1/auth/refresh", json={"refresh_token": other_refresh},
+                        headers={"X-Client-Platform": "ios"})
+        assert r.status_code == 200
+
+    @pytest.mark.parametrize("bad,code", [
+        ({"current_password": CREDS["password"], "new_password": "short7!"}, "VALIDATION_ERROR"),  # 8자 미만
+        ({"new_password": "new-strong-pw-9876"}, "VALIDATION_ERROR"),                              # current 누락
+        ({"current_password": CREDS["password"]}, "VALIDATION_ERROR"),                             # new 누락
+        ({"current_password": "", "new_password": "new-strong-pw-9876"}, "VALIDATION_ERROR"),      # current 빈값
+    ])
+    def test_invalid_body_422(self, test_user, bad, code):
+        res = _call("PATCH", PW_URL, headers=_auth(), json=bad)
+        assert res.status_code == 422
+        assert res.json()["error"]["code"] == code
+
+    def test_unknown_field_rejected(self, test_user):
+        """new_pasword 같은 오타 → 422 (extra=forbid), 비번은 안 바뀐다."""
+        res = _call("PATCH", PW_URL, headers=_auth(),
+                    json={"current_password": CREDS["password"], "new_pasword": self.NEW_PW})
+        assert res.status_code == 422
+        assert self._login_status(CREDS["password"]) == 200  # 변경 안 됨
+
+    def test_no_token_no_body_is_401_not_422(self, test_user):
+        """인증이 바디 검증보다 먼저 — 무토큰+무바디 → 401."""
+        res = _call("PATCH", PW_URL)
+        assert res.status_code == 401
+        assert res.json()["error"]["code"] == "UNAUTHORIZED"
 
 
 class TestContractLocks:
