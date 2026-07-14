@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     # 서명 URL 유효시간(초). 기본 1시간 — 재생 중 만료되지 않을 만큼.
     signed_url_expires_seconds: int = 3600
 
+    # 이메일 발송 제공자 (mock | smtp). mock은 발송 대신 로그에 코드를 출력한다 —
+    # SMTP 없이 전체 개발·테스트 가능. smtp는 배포 VM에서만 켠다 (plan §7-1).
+    email_provider: str = "mock"
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587            # STARTTLS
+    smtp_user: str = ""             # 보내는 gmail 주소
+    smtp_password: str = ""         # gmail 앱 비밀번호 — .env에만, 커밋 금지
+
     # LLM 제공자 선택 (mock | gemini)
     llm_provider: str = "mock"
     gemini_api_key: str = ""
