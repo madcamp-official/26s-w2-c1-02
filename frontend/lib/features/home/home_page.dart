@@ -39,7 +39,7 @@ class _HomePageState extends State<HomePage> {
         actions: [
           IconButton(
             tooltip: '마이페이지',
-            icon: const Icon(Icons.account_circle_outlined),
+            icon: const Icon(Icons.person, color: AppColors.textPrimary),
             onPressed: () => context.push('/me'),
           ),
           const SizedBox(width: 8),
@@ -48,6 +48,7 @@ class _HomePageState extends State<HomePage> {
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.accent,
         foregroundColor: Colors.white,
+        shape: const CircleBorder(), // M3 기본(둥근 사각형) 대신 원형
         onPressed: () => context.push('/teams/new'),
         child: const Icon(Icons.add),
       ),
@@ -221,7 +222,7 @@ class _JoinByCodeCard extends StatelessWidget {
             children: [
               Icon(Icons.key, size: 18, color: AppColors.textSecondary),
               SizedBox(width: 8),
-              Text('초대코드로 참여',
+              Text('초대코드로 참여하기',
                   style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
