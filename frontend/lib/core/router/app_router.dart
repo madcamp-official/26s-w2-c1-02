@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/account_recovery_page.dart';
 import '../../features/auth/login_page.dart';
 import '../../features/auth/signup_page.dart';
+import '../../features/auth/verify_email_page.dart';
 import '../../features/home/home_page.dart';
 import '../../features/profile/change_password_page.dart';
 import '../../features/profile/my_page.dart';
@@ -40,6 +41,7 @@ class AppRouter {
       // 초대 미리보기는 인증 불필요 (spec §3.1 H)
       final isPublic = loc == '/login' ||
           loc == '/signup' ||
+          loc == '/verify-email' || // 인증 전 유저가 쓰는 화면 (§8-2)
           loc == '/account-recovery' ||
           loc.startsWith('/invites/');
       if (!auth.isLoggedIn && !isPublic) return '/login';
@@ -50,6 +52,14 @@ class AppRouter {
       // ---- 01 인증 ----
       GoRoute(path: '/login', builder: (_, _) => const LoginPage()),
       GoRoute(path: '/signup', builder: (_, _) => const SignupPage()),
+      GoRoute(
+        // 진입: /verify-email?email=aa@b.c(&send=1) — send=1이면 진입 즉시 재발송 (§8-4)
+        path: '/verify-email',
+        builder: (_, state) => VerifyEmailPage(
+          email: state.uri.queryParameters['email'] ?? '',
+          sendOnEntry: state.uri.queryParameters['send'] == '1',
+        ),
+      ),
       GoRoute(
           path: '/account-recovery',
           builder: (_, _) => const AccountRecoveryPage()),

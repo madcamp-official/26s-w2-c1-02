@@ -35,6 +35,10 @@ class AuthRepository {
   Future<void> verifyEmail(String email, String code) =>
       _api.post('/auth/email/verify', body: {'email': email, 'code': code});
 
+  /// 인증코드 재발송 — 유저가 없어도 204 (계정 존재 노출 방지, §9).
+  Future<void> requestEmailVerification(String email) =>
+      _api.post('/auth/email/verify-request', body: {'email': email});
+
   Future<AppUser> me() async {
     final json = await _api.get('/auth/me') as Map<String, dynamic>;
     return AppUser.fromJson(json['user'] as Map<String, dynamic>);

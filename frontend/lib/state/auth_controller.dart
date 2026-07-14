@@ -38,6 +38,14 @@ class AuthController extends ChangeNotifier {
       _guard(() => _repo.signup(
           name: name, username: username, password: password, email: email));
 
+  /// 이메일 인증코드 확인 (email-verification-plan §8-2).
+  Future<void> verifyEmail(String email, String code) =>
+      _repo.verifyEmail(email, code);
+
+  /// 인증코드 재발송 (§8-2 — 60초 쿨다운은 화면 몫).
+  Future<void> requestEmailVerification(String email) =>
+      _repo.requestEmailVerification(email);
+
   Future<void> logout() async {
     await _repo.logout();
     _user = null;

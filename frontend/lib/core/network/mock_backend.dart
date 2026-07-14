@@ -33,6 +33,15 @@ class MockBackend implements HttpBackend {
   final Set<String> _refreshTokens = {};
   int _seq = 0;
 
+  // ---- 이메일 인증 mock (email-verification-plan.md §8-5·§9) ----
+  // 가입한 유저는 미인증으로 시작해 verify(코드 '000000') 후 로그인 가능.
+  // 'unverified'는 로그인 403(EMAIL_NOT_VERIFIED) 분기 테스트용 고정 시드.
+  static const verifyCode = '000000';
+  final Map<String, String> _emailByUsername = {
+    'unverified': 'unverified@rehearsal.io',
+  };
+  final Set<String> _unverifiedEmails = {'unverified@rehearsal.io'};
+
   static const _me = {
     'id': 'usr_1',
     'name': '준서',
@@ -94,8 +103,11 @@ class MockBackend implements HttpBackend {
     if (m == 'POST' && path == '/auth/login') return _login(r);
     if (m == 'POST' && path.startsWith('/auth/login/social/')) return _login(r);
     if (m == 'POST' && path == '/auth/signup') return _signup(r);
-    if (m == 'POST' && path == '/auth/email/verify') return _ok({'verified': true});
-    if (m == 'POST' && path == '/auth/email/verify-request') return _ok({});
+    if (m == 'POST' && path == '/auth/email/verify') return _verifyEmail(r);
+    if (m == 'POST' && path == '/auth/email/verify-request') {
+      // 유저가 없어도·이미 인증돼도 항상 204 (§9 — 계정 존재 여부 노출 방지)
+      return const BackendResponse(statusCode: 204);
+    }
     if (m == 'POST' && path == '/auth/refresh') return _refresh(r);
     if (m == 'GET' && _match(path, r'^/invites/([^/]+)$') != null) {
       return _ok({
@@ -302,14 +314,44 @@ class MockBackend implements HttpBackend {
     });
   }
 
-  BackendResponse _login(BackendRequest r) => _issueTokens(r);
+  BackendResponse _login(BackendRequest r) {
+    // 미인증 유저는 로그인 차단 — FE가 403을 받으면 코드 입력 화면으로 보낸다 (§8-4).
+    final username = r.jsonBody?['username'] as String?;
+    final email = _emailByUsername[username];
+    if (email != null && _unverifiedEmails.contains(email)) {
+      return _err(403, 'EMAIL_NOT_VERIFIED', '이메일 인증이 필요해요.');
+    }
+    return _issueTokens(r);
+  }
 
-  BackendResponse _signup(BackendRequest r) => BackendResponse(
-        statusCode: 201,
-        json: {
-          'user': {..._me, 'email_verified': false},
-        },
-      );
+  BackendResponse _signup(BackendRequest r) {
+    final username = r.jsonBody?['username'] as String?;
+    final email = r.jsonBody?['email'] as String?;
+    if (username != null && email != null) {
+      _emailByUsername[username] = email; // 가입 즉시 미인증 — verify 후 로그인 가능 (§8-5)
+      _unverifiedEmails.add(email);
+    }
+    return BackendResponse(
+      statusCode: 201,
+      json: {
+        'user': {..._me, 'email_verified': false},
+      },
+    );
+  }
+
+  BackendResponse _verifyEmail(BackendRequest r) {
+    final email = r.jsonBody?['email'] as String?;
+    final code = r.jsonBody?['code'] as String?;
+    if (code == '111111') {
+      // 매직 코드 — 만료 시나리오 UI(재발송 강조) 검증용. 실서버는 10분 TTL로 발생.
+      return _err(400, 'CODE_EXPIRED', '코드가 만료됐어요');
+    }
+    if (code != verifyCode) {
+      return _err(400, 'INVALID_CODE', '코드가 올바르지 않아요');
+    }
+    _unverifiedEmails.remove(email); // 멱등 — 이미 인증된 이메일도 200 (§9)
+    return _ok({'email_verified': true});
+  }
 
   BackendResponse _refresh(BackendRequest r) {
     final token = r.jsonBody?['refresh_token'] as String?;
