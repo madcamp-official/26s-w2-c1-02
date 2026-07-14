@@ -43,9 +43,13 @@ class _QnaPageState extends State<QnaPage> {
         child: ResponsivePage(
           child: PollingBuilder<QnaState>(
             fetch: () => repo.getQna(widget.sessionId),
-            // 질의응답이 끝날 때까지 계속 폴링 (질문 생성 대기도 포함).
-            isDone: (q) => q.status == QnaStatus.ended,
+            // 종료(ended) 또는 생성 실패(failed)면 폴링을 멈춘다. 그 외(생성 중·진행
+            // 중)는 계속 폴링한다.
+            isDone: (q) =>
+                q.status == QnaStatus.ended || q.status == QnaStatus.failed,
             onDone: (q) {
+              // 종료만 결과 화면으로. 실패는 builder가 재생성 안내를 띄운다.
+              if (q.status != QnaStatus.ended) return;
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (context.mounted) {
                   context.pushReplacement(
@@ -57,6 +61,16 @@ class _QnaPageState extends State<QnaPage> {
               final qna = snap.data;
               if (snap.error != null) {
                 return _ErrorRetry(error: snap.error!, onRetry: retry);
+              }
+              // 질문 생성 실패 — 같은 폴링 재시도가 아니라 생성을 다시 접수해야 한다
+              // (세션 failed → generating_questions 재시도 경로). 이후 폴링 재개.
+              if (qna != null && qna.status == QnaStatus.failed) {
+                return _GenerationFailed(
+                  onRetry: () async {
+                    await repo.generateQna(widget.sessionId);
+                    retry();
+                  },
+                );
               }
               if (qna == null || qna.questions.isEmpty) {
                 return const _GeneratingView();
@@ -649,6 +663,64 @@ class _AnswerStatus extends StatelessWidget {
             style: TextStyle(
                 fontSize: 12.5,
                 color: danger ? AppColors.danger : AppColors.textSecondary)),
+      ],
+    );
+  }
+}
+
+/// 질문 생성 실패 안내 — 폴링 재시도가 아니라 생성을 다시 접수한다.
+class _GenerationFailed extends StatefulWidget {
+  const _GenerationFailed({required this.onRetry});
+
+  /// generateQna 재접수 후 폴링을 재개한다. 완료까지 await.
+  final Future<void> Function() onRetry;
+
+  @override
+  State<_GenerationFailed> createState() => _GenerationFailedState();
+}
+
+class _GenerationFailedState extends State<_GenerationFailed> {
+  bool _busy = false;
+
+  Future<void> _retry() async {
+    if (_busy) return; // 중복 접수 방지 (재접수 시 409 QNA_ALREADY_STARTED)
+    setState(() => _busy = true);
+    try {
+      await widget.onRetry();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('다시 생성하지 못했어요: $e')));
+      }
+    }
+    // 성공하면 폴링이 재개되며 이 위젯은 곧 생성 중 화면으로 교체된다.
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        const Icon(Icons.error_outline, size: 48, color: AppColors.danger),
+        const SizedBox(height: 12),
+        const Text('질문 생성에 실패했어요',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        const Text('AI 청중 응답이 지연되거나 실패했어요. 다시 시도해주세요.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppColors.textSecondary)),
+        const SizedBox(height: 16),
+        FilledButton(
+          onPressed: _busy ? null : _retry,
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : const Text('다시 생성'),
+        ),
       ],
     );
   }

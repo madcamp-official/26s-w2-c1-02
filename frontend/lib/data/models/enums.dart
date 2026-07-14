@@ -98,7 +98,8 @@ enum FollowUpStatus {
 
 enum QnaStatus {
   inProgress('in_progress'),
-  ended('ended');
+  ended('ended'),
+  failed('failed'); // 질문 생성 실패 — 재생성으로 복구
 
   const QnaStatus(this.wire);
   final String wire;
