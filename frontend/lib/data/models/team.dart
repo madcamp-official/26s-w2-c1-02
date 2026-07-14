@@ -36,7 +36,7 @@ class TeamMember {
   final String name;
 
   factory TeamMember.fromJson(Map<String, dynamic> json) => TeamMember(
-        userId: json['user_id'] as String,
+        userId: json['id'] as String,
         name: json['name'] as String? ?? '탈퇴한 사용자',
       );
 }
