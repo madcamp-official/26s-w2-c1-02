@@ -55,6 +55,61 @@ def _audio_ext(file: UploadFile) -> str | None:
     return None
 
 
+def _store_full_recording(
+    db: Session,
+    session: models.RehearsalSession,
+    *,
+    file: UploadFile,
+    data: bytes,
+    ext: str,
+    duration_seconds: int,
+    started_at: datetime | None,
+    ended_at: datetime | None,
+    total_chunks: int | None,
+) -> str | None:
+    """전체 녹음 파일 저장 + recordings/transcripts 업서트 + transcribing 전이.
+
+    일괄 업로드(§4.3)와 실시간 complete(§4.3.1)가 공유. 반환값은 확장자 변경
+    재업로드로 고아가 된 옛 storage_key(정리 대상) 또는 None. **커밋은 호출자**가 한다.
+    total_chunks는 청크 complete만 값을 넣고 일괄 경로는 None(비청크 의미)."""
+    key = storage.recording_key(session.id, ext)
+    storage.save(key, data)
+
+    # 동시 업로드 직렬화 (material과 동일 — 1:1 행 PK 충돌 방지)
+    db.refresh(session, with_for_update=True)
+
+    recording = db.get(models.Recording, session.id)
+    # 재업로드로 확장자가 바뀌면 옛 파일이 고아로 남으므로 키를 기억해뒀다 정리한다.
+    old_key = recording.storage_key if recording is not None else None
+    if recording is None:
+        recording = models.Recording(session_id=session.id, storage_key=key)
+        db.add(recording)
+    recording.status = AsyncStatus.ready
+    recording.file_name = file.filename or f"recording.{ext}"
+    recording.file_size_bytes = len(data)
+    recording.mime_type = file.content_type or f"audio/{ext}"
+    recording.duration_seconds = duration_seconds
+    recording.storage_key = key
+    recording.started_at = started_at
+    recording.ended_at = ended_at
+    recording.total_chunks = total_chunks
+
+    transcript = db.get(models.Transcript, session.id)
+    if transcript is None:
+        transcript = models.Transcript(session_id=session.id)
+        db.add(transcript)
+    transcript.status = AsyncStatus.queued
+    transcript.segments = None
+    transcript.error_code = None
+    transcript.error_message = None
+
+    # 세션 상태 → transcribing (이미 transcribing이면 유지; failed면 재시도 경로)
+    if session.status != SessionStatus.transcribing:
+        advance_status(session, SessionStatus.transcribing)
+
+    return old_key if (old_key and old_key != key) else None
+
+
 @router.post("/sessions/{session_id}/recording", status_code=202)
 def upload_recording(
     file: UploadFile = File(...),
@@ -81,43 +136,13 @@ def upload_recording(
         raise ApiError(409, "RECORDING_NOT_ALLOWED",
                        "이미 질의응답이 시작돼 녹음을 올릴 수 없어요.")
 
-    key = storage.recording_key(session.id, ext)
-    storage.save(key, data)
-
-    # 동시 업로드 직렬화 (material과 동일 — 1:1 행 PK 충돌 방지)
-    db.refresh(session, with_for_update=True)
-
-    recording = db.get(models.Recording, session.id)
-    # 재업로드로 확장자가 바뀌면 옛 파일이 고아로 남으므로 키를 기억해뒀다 정리한다.
-    old_key = recording.storage_key if recording is not None else None
-    if recording is None:
-        recording = models.Recording(session_id=session.id, storage_key=key)
-        db.add(recording)
-    recording.status = AsyncStatus.ready
-    recording.file_name = file.filename or f"recording.{ext}"
-    recording.file_size_bytes = len(data)
-    recording.mime_type = file.content_type or f"audio/{ext}"
-    recording.duration_seconds = duration_seconds
-    recording.storage_key = key
-    recording.started_at = started_at
-    recording.ended_at = ended_at
-
-    transcript = db.get(models.Transcript, session.id)
-    if transcript is None:
-        transcript = models.Transcript(session_id=session.id)
-        db.add(transcript)
-    transcript.status = AsyncStatus.queued
-    transcript.segments = None
-    transcript.error_code = None
-    transcript.error_message = None
-
-    # 세션 상태 → transcribing (이미 transcribing이면 유지; failed면 재시도 경로)
-    if session.status != SessionStatus.transcribing:
-        advance_status(session, SessionStatus.transcribing)
-
+    old_key = _store_full_recording(
+        db, session, file=file, data=data, ext=ext, duration_seconds=duration_seconds,
+        started_at=started_at, ended_at=ended_at, total_chunks=None,
+    )
     db.commit()
 
-    if old_key and old_key != key:  # 확장자 변경 재업로드 → 옛 파일 정리
+    if old_key:  # 확장자 변경 재업로드 → 옛 파일 정리
         storage.delete(old_key)
     stt_queue.enqueue(session.id)  # STT 직렬 큐 (워커가 한 번에 하나씩 처리)
     return {"status": AsyncStatus.queued.value}
@@ -188,6 +213,50 @@ def upload_recording_chunk(
     db.commit()
     stt_queue.enqueue_chunk(session.id, seq)  # 직렬 워커 공유
     return {"received_seq": seq}
+
+
+@router.post("/sessions/{session_id}/recording/complete", status_code=202)
+def complete_recording(
+    file: UploadFile = File(...),
+    total_chunks: int = Form(...),
+    duration_seconds: float = Form(...),
+    started_at: datetime | None = Form(None),
+    ended_at: datetime | None = Form(None),
+    session: models.RehearsalSession = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """실시간 녹음 종료(api-spec §4.3.1): 재생용 전체 파일 저장 + 병합 트리거 → 202.
+
+    청크가 전부 도착했으면 저장된 청크 세그먼트를 병합, 누락/실패가 있으면 이 전체
+    파일로 재전사한다(안전망 ②) — 즉 청크가 전부 유실돼도 일괄 업로드와 동일 결과."""
+    ext = _audio_ext(file)
+    if ext is None:
+        raise ApiError(415, "UNSUPPORTED_MEDIA", "mp3 · wav · m4a 파일만 업로드할 수 있어요.")
+    if duration_seconds < 0 or duration_seconds > _MAX_DURATION:
+        raise ApiError(400, "RECORDING_TOO_LONG", "녹음은 60분 이하만 가능해요.")
+    if total_chunks < 0:
+        raise ApiError(400, "VALIDATION", "total_chunks는 0 이상이어야 해요.")
+
+    data = file.file.read()
+    if len(data) == 0:
+        raise ApiError(400, "EMPTY_FILE", "빈 파일이에요.")
+    if len(data) > _MAX_BYTES:
+        raise ApiError(413, "FILE_TOO_LARGE", "녹음은 200MB 이하만 업로드할 수 있어요.")
+
+    if session.status not in _UPLOADABLE:
+        raise ApiError(409, "RECORDING_NOT_ALLOWED",
+                       "이미 질의응답이 시작돼 녹음을 올릴 수 없어요.")
+
+    old_key = _store_full_recording(
+        db, session, file=file, data=data, ext=ext, duration_seconds=round(duration_seconds),
+        started_at=started_at, ended_at=ended_at, total_chunks=total_chunks,
+    )
+    db.commit()
+
+    if old_key:
+        storage.delete(old_key)
+    stt_queue.enqueue_complete(session.id)  # 병합 잡(청크 잡 뒤에 직렬 실행)
+    return {"status": AsyncStatus.queued.value}
 
 
 @router.get("/sessions/{session_id}/transcript", response_model=TranscriptDetail)
