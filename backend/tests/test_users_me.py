@@ -32,9 +32,17 @@ ME_URL = "/api/v1/users/me"
 PW_URL = "/api/v1/users/me/password"
 CREDS = {"username": "umtest_user", "password": "um-pass-12345"}
 
-# (method, url) — 골격의 4개 엔드포인트
+# (method, url) — 4개 엔드포인트 전체 (인증 배선은 구현 여부와 무관하게 전부 적용)
 ENDPOINTS = [
     ("GET", ME_URL),
+    ("PATCH", ME_URL),
+    ("PATCH", PW_URL),
+    ("DELETE", ME_URL),
+]
+
+# 아직 미구현(501 골격)인 엔드포인트 — 구현되면 여기서 빼고 기능 테스트로 대체한다.
+# 작업 3: GET /me 구현 완료 → 목록에서 제외.
+PENDING_ENDPOINTS = [
     ("PATCH", ME_URL),
     ("PATCH", PW_URL),
     ("DELETE", ME_URL),
@@ -48,9 +56,14 @@ def test_user():
         "password": CREDS["password"], "email": "umtest@test.io",
     })
     assert res.status_code == 201
-    yield res.json()["user"]
+    user = res.json()["user"]
+    yield user
+    # id로도 지운다 — 익명화 테스트는 username을 NULL로 만들어 ilike로는 안 잡히므로
+    # (그대로 두면 익명화 고아 행이 남는다). 접두사 조건은 이전 실패 잔여분 청소용.
     with SessionLocal() as db:
-        db.execute(delete(User).where(User.username.ilike("umtest%")))
+        db.execute(delete(User).where(
+            (User.id == user["id"]) | (User.username.ilike("umtest%"))
+        ))
         db.commit()
 
 
@@ -111,14 +124,72 @@ class TestAuthWiring:
 
 
 class TestSkeletonReachable:
-    @pytest.mark.parametrize("method,url", ENDPOINTS)
+    @pytest.mark.parametrize("method,url", PENDING_ENDPOINTS)
     def test_valid_token_reaches_handler(self, method, url):
-        """유효 토큰 → 핸들러까지 도달 → 501 NOT_IMPLEMENTED (골격 표식).
+        """미구현 엔드포인트: 유효 토큰 → 핸들러 도달 → 501 NOT_IMPLEMENTED (골격 표식).
 
-        작업 3~6에서 각 핸들러를 구현하면 이 기대값은 해당 테스트로 대체된다."""
+        작업 4~6에서 각 핸들러를 구현하면 여기서 빼고 기능 테스트로 대체한다."""
         res = _call(method, url, headers={"Authorization": f"Bearer {_token()}"})
         assert res.status_code == 501
         assert res.json()["error"]["code"] == "NOT_IMPLEMENTED"
+
+
+class TestGetMe:
+    """작업 3 — GET /users/me 기능 검증."""
+
+    def test_returns_current_user(self, test_user):
+        res = _call("GET", ME_URL, headers={"Authorization": f"Bearer {_token()}"})
+        assert res.status_code == 200
+        body = res.json()
+        # api-spec §2.1 응답 형태 — 정확히 5필드
+        assert set(body) == {"id", "name", "username", "email", "email_verified"}
+        assert body["id"] == test_user["id"]
+        assert body["username"] == CREDS["username"]
+        assert body["name"] == "마이테스트"
+        assert body["email"] == "umtest@test.io"
+
+    def test_email_verified_false_for_unverified_signup(self, test_user):
+        """갓 가입한 유저는 email_verified_at=None → email_verified=False."""
+        res = _call("GET", ME_URL, headers={"Authorization": f"Bearer {_token()}"})
+        assert res.json()["email_verified"] is False
+
+    def test_email_verified_true_when_verified(self, test_user):
+        """email_verified_at이 채워지면 email_verified=True (파생 규약 고정)."""
+        with SessionLocal() as db:
+            db.execute(
+                User.__table__.update()
+                .where(User.id == test_user["id"])
+                .values(email_verified_at=datetime.now(timezone.utc))
+            )
+            db.commit()
+        res = _call("GET", ME_URL, headers={"Authorization": f"Bearer {_token()}"})
+        assert res.status_code == 200
+        assert res.json()["email_verified"] is True
+
+    def test_reflects_no_password_hash_leak(self, test_user):
+        """응답에 password_hash·deleted_at 등 내부 필드가 새지 않는다."""
+        res = _call("GET", ME_URL, headers={"Authorization": f"Bearer {_token()}"})
+        body = res.json()
+        assert "password_hash" not in body
+        assert "deleted_at" not in body
+
+    def test_anonymized_user_with_valid_token_gets_401_not_500(self, test_user):
+        """탈퇴(익명화)로 PII가 NULL이 된 유저가 아직 만료 안 된 토큰을 들고 와도
+        401로 막힌다 — get_current_user가 deleted_at을 보고 차단하므로, non-null
+        UserOut이 NULL name/username/email로 500나는 사고가 없다.
+        작업 6 익명화 설계와 GET의 계약을 함께 고정."""
+        token = _token()  # 활성 상태에서 유효 토큰 확보
+        with SessionLocal() as db:
+            db.execute(
+                User.__table__.update().where(User.id == test_user["id"]).values(
+                    username=None, password_hash=None, name=None, email=None,
+                    deleted_at=datetime.now(timezone.utc),
+                )
+            )
+            db.commit()
+        res = _call("GET", ME_URL, headers={"Authorization": f"Bearer {token}"})
+        assert res.status_code == 401
+        assert res.json()["error"]["code"] == "UNAUTHORIZED"
 
 
 class TestContractLocks:

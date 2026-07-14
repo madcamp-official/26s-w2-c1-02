@@ -25,8 +25,14 @@ _NOT_IMPL_MSG = "이 기능은 아직 준비 중이에요."
 
 @router.get("/me", response_model=UserOut)
 def get_me(current_user: models.User = Depends(get_current_user)) -> UserOut:
-    """계정 정보 조회 (api-spec §2.1). 구현: 작업 3."""
-    raise ApiError(501, "NOT_IMPLEMENTED", _NOT_IMPL_MSG)
+    """계정 정보 조회 (api-spec §2.1).
+
+    get_current_user가 이미 토큰 검증 + 탈퇴 유저 차단을 마쳤으므로 직렬화만 한다.
+    email_verified는 email_verified_at에서 파생(signup 응답과 동일 규약)."""
+    return UserOut(
+        id=current_user.id, name=current_user.name, username=current_user.username,
+        email=current_user.email, email_verified=current_user.email_verified_at is not None,
+    )
 
 
 @router.patch("/me", response_model=UserOut)
