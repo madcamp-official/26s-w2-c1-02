@@ -19,6 +19,7 @@ from app.api.deps import get_current_user, require_team_leader, require_team_mem
 from app.core.errors import ApiError
 from app.db import models
 from app.db.session import get_db
+from app.services.team_membership import leave_or_succeed
 from app.schemas.team import (
     TeamCard,
     TeamCreateRequest,
@@ -121,30 +122,11 @@ def leave_team(
     - 비팀장         : 내 멤버십만 삭제
     - 팀장 + 후임 있음: 최고참(joined_at→user_id) 승계 후 내 멤버십 삭제
     - 팀장 + 마지막 1인: 팀 삭제 (세션·멤버십·초대 CASCADE)
+
+    이탈/승계 규칙은 `services/team_membership.leave_or_succeed`가 소유 —
+    탈퇴(DELETE /users/me)와 동일 로직을 공유한다.
     """
-    # 같은 팀의 나가기/내보내기를 직렬화 — 팀 행에 잠금(FOR UPDATE)을 걸고 리더를 새로 읽는다.
-    # 없으면 '리더 나가기(승계)'와 '다른 멤버 나가기'가 겹칠 때 커밋 시점 FK 위반(500)이 난다.
-    db.refresh(team, with_for_update=True)
-    membership = db.get(models.TeamMember, (team.id, user.id))  # 멤버임은 가드가 보장
-
-    if team.leader_id != user.id:
-        db.delete(membership)
-        db.commit()
-        return
-
-    # 팀장 이탈 → 본인 제외 최고참을 후임으로 (db-schema §7.2 쿼리 그대로)
-    successor_id = db.scalar(
-        select(models.TeamMember.user_id)
-        .where(models.TeamMember.team_id == team.id,
-               models.TeamMember.user_id != user.id)
-        .order_by(models.TeamMember.joined_at, models.TeamMember.user_id)
-        .limit(1)
-    )
-    if successor_id is None:
-        db.delete(team)          # 마지막 1인 → 팀 통째로 CASCADE
-    else:
-        team.leader_id = successor_id
-        db.delete(membership)    # 커밋 시 후임이 멤버로 남아 있어 FK 통과
+    leave_or_succeed(db, team, user.id)  # 멤버임은 require_team_member 가드가 보장
     db.commit()
 
 

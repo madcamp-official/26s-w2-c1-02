@@ -19,10 +19,11 @@ from datetime import datetime, timedelta, timezone
 import jwt as pyjwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.core.config import settings
-from app.db.models import User
+from app.db import models
+from app.db.models import RefreshToken, SocialAccount, Team, TeamMember, User
 from app.db.session import SessionLocal
 from app.main import app
 
@@ -40,27 +41,45 @@ ENDPOINTS = [
     ("DELETE", ME_URL),
 ]
 
-# 아직 미구현(501 골격)인 엔드포인트 — 구현되면 여기서 빼고 기능 테스트로 대체한다.
-# 작업 3: GET /me · 작업 4: PATCH /me · 작업 5: PATCH /me/password 구현 완료.
-PENDING_ENDPOINTS = [
-    ("DELETE", ME_URL),
-]
+# 테스트가 만든 유저·팀 id 등록부 — teardown이 팀(→세션·멤버 CASCADE) 먼저,
+# 그다음 유저를 지운다. 익명화는 username을 NULL로 만들어 ilike로 안 잡히므로 id 등록 필수.
+_user_ids: list[str] = []
+_team_ids: list[str] = []
+
+
+def _signup(username: str, email: str, password: str = "um-pass-12345",
+            name: str = "마이테스트") -> dict:
+    res = client.post("/api/v1/auth/signup", json={
+        "name": name, "username": username, "password": password, "email": email,
+    })
+    assert res.status_code == 201, res.text
+    user = res.json()["user"]
+    _user_ids.append(user["id"])
+    return user
+
+
+def _create_team(token: str, name: str = "테스트팀") -> dict:
+    res = client.post("/api/v1/teams", json={"name": name},
+                      headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 201, res.text
+    team = res.json()
+    _team_ids.append(team["id"])
+    return team
 
 
 @pytest.fixture(autouse=True)
 def test_user():
-    res = client.post("/api/v1/auth/signup", json={
-        "name": "마이테스트", "username": CREDS["username"],
-        "password": CREDS["password"], "email": "umtest@test.io",
-    })
-    assert res.status_code == 201
-    user = res.json()["user"]
+    _user_ids.clear()
+    _team_ids.clear()
+    user = _signup(CREDS["username"], "umtest@test.io", CREDS["password"], "마이테스트")
     yield user
-    # id로도 지운다 — 익명화 테스트는 username을 NULL로 만들어 ilike로는 안 잡히므로
-    # (그대로 두면 익명화 고아 행이 남는다). 접두사 조건은 이전 실패 잔여분 청소용.
+    # 팀을 먼저 지운다 — 세션(owner_id RESTRICT)·멤버십·초대가 팀 CASCADE로 함께 사라져야
+    # 그다음 유저 하드삭제가 owner_id RESTRICT에 안 걸린다. 접두사 조건은 잔여분 보험.
     with SessionLocal() as db:
+        if _team_ids:
+            db.execute(delete(Team).where(Team.id.in_(_team_ids)))
         db.execute(delete(User).where(
-            (User.id == user["id"]) | (User.username.ilike("umtest%"))
+            User.id.in_(_user_ids) | User.username.ilike("umtest%")
         ))
         db.commit()
 
@@ -128,17 +147,6 @@ class TestAuthWiring:
                     headers={"Authorization": f"Bearer {_expired_token(test_user['id'])}"})
         assert res.status_code == 401
         assert res.json()["error"]["code"] == "TOKEN_EXPIRED"
-
-
-class TestSkeletonReachable:
-    @pytest.mark.parametrize("method,url", PENDING_ENDPOINTS)
-    def test_valid_token_reaches_handler(self, method, url):
-        """미구현 엔드포인트: 유효 토큰 → 핸들러 도달 → 501 NOT_IMPLEMENTED (골격 표식).
-
-        작업 4~6에서 각 핸들러를 구현하면 여기서 빼고 기능 테스트로 대체한다."""
-        res = _call(method, url, headers={"Authorization": f"Bearer {_token()}"})
-        assert res.status_code == 501
-        assert res.json()["error"]["code"] == "NOT_IMPLEMENTED"
 
 
 class TestGetMe:
@@ -402,6 +410,100 @@ class TestChangePassword:
         res = _call("PATCH", PW_URL)
         assert res.status_code == 401
         assert res.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+class TestDeleteMe:
+    """작업 6 — DELETE /users/me (회원 탈퇴 = 익명화, §7.1). 최난도."""
+
+    def test_anonymizes_not_hard_delete(self, test_user):
+        """하드삭제가 아니라 익명화 — row는 남고 PII만 NULL + deleted_at."""
+        res = _call("DELETE", ME_URL, headers=_auth())
+        assert res.status_code == 204
+        assert res.content == b""
+        with SessionLocal() as db:
+            u = db.get(User, test_user["id"])
+            assert u is not None                        # row 보존
+            assert u.username is None and u.password_hash is None
+            assert u.name is None and u.email is None
+            assert u.deleted_at is not None             # 익명화 마커
+
+    def test_token_and_relogin_blocked_after_delete(self, test_user):
+        """탈퇴 후: 기존 토큰은 401, 옛 자격증명 재로그인도 401(탈퇴 유저 차단)."""
+        token = _token()
+        assert _call("DELETE", ME_URL, headers=_auth(token)).status_code == 204
+        assert _call("GET", ME_URL, headers=_auth(token)).status_code == 401
+        assert client.post("/api/v1/auth/login", json=CREDS,
+                           headers={"X-Client-Platform": "ios"}).status_code == 401
+
+    def test_refresh_tokens_revoked(self, test_user):
+        refresh = _login()["refresh_token"]
+        assert _call("DELETE", ME_URL, headers=_auth()).status_code == 204
+        r = client.post("/api/v1/auth/refresh", json={"refresh_token": refresh},
+                        headers={"X-Client-Platform": "ios"})
+        assert r.status_code == 401
+        with SessionLocal() as db:
+            rows = db.scalars(select(RefreshToken).where(
+                RefreshToken.user_id == test_user["id"])).all()
+            assert rows and all(t.revoked_at is not None for t in rows)
+
+    def test_social_accounts_deleted(self, test_user):
+        with SessionLocal() as db:
+            db.add(SocialAccount(user_id=test_user["id"], provider="google",
+                                 provider_user_id="g-123"))
+            db.commit()
+        assert _call("DELETE", ME_URL, headers=_auth()).status_code == 204
+        with SessionLocal() as db:
+            n = db.scalars(select(SocialAccount).where(
+                SocialAccount.user_id == test_user["id"])).all()
+            assert n == []
+
+    def test_reregister_same_username_email_allowed(self, test_user):
+        """익명화(PII NULL)라 부분 유니크 인덱스와 안 부딪혀 재가입 허용."""
+        assert _call("DELETE", ME_URL, headers=_auth()).status_code == 204
+        res = client.post("/api/v1/auth/signup", json={
+            "name": "재가입", "username": CREDS["username"],
+            "password": CREDS["password"], "email": "umtest@test.io",
+        })
+        assert res.status_code == 201
+        _user_ids.append(res.json()["user"]["id"])  # teardown 등록
+
+    def test_solo_team_leader_delete_removes_team(self, test_user):
+        """혼자인 팀의 팀장 탈퇴 → 팀 통째로 삭제(세션 CASCADE)."""
+        team = _create_team(_token())
+        assert _call("DELETE", ME_URL, headers=_auth()).status_code == 204
+        with SessionLocal() as db:
+            assert db.get(Team, team["id"]) is None
+
+    def test_leader_succession_on_delete(self, test_user):
+        """멤버가 더 있는 팀의 팀장 탈퇴 → 최고참 승계 + 내 멤버십 제거, 팀 보존."""
+        team = _create_team(_token())
+        other = _signup("umtest_succ", "umtest_succ@test.io", name="후임")
+        with SessionLocal() as db:  # 두 번째 멤버 직접 추가(초대 플로우 생략)
+            db.add(TeamMember(team_id=team["id"], user_id=other["id"]))
+            db.commit()
+        assert _call("DELETE", ME_URL, headers=_auth()).status_code == 204
+        with SessionLocal() as db:
+            t = db.get(Team, team["id"])
+            assert t is not None and t.leader_id == other["id"]     # 승계됨
+            assert db.get(TeamMember, (team["id"], test_user["id"])) is None  # 내 멤버십 제거
+
+    def test_owner_sessions_preserved_when_team_survives(self, test_user):
+        """팀이 살아남으면 내가 owner인 세션은 보존 — owner_id는 익명화된 나를 계속 가리킨다."""
+        team = _create_team(_token())
+        other = _signup("umtest_keep", "umtest_keep@test.io", name="잔류")
+        with SessionLocal() as db:
+            db.add(TeamMember(team_id=team["id"], user_id=other["id"]))
+            db.commit()
+        sess = client.post(f"/api/v1/teams/{team['id']}/sessions",
+            json={"name": "내발표", "personas": ["egen"], "question_count": 3,
+                  "time_limit_minutes": 10, "mode": "upload"},
+            headers=_auth()).json()
+        assert _call("DELETE", ME_URL, headers=_auth()).status_code == 204
+        with SessionLocal() as db:
+            s = db.get(models.RehearsalSession, sess["id"])
+            assert s is not None and s.owner_id == test_user["id"]  # 세션 보존
+            u = db.get(User, test_user["id"])
+            assert u.deleted_at is not None and u.name is None       # 나는 익명화됨
 
 
 class TestContractLocks:
