@@ -24,6 +24,7 @@ from app.core.errors import ApiError
 from app.db import models
 from app.db.enums import AsyncStatus, SessionStatus
 from app.db.session import get_db
+from app.services.storage_cleanup import session_storage_keys
 from app.schemas.session import (
     MaterialStatusOut,
     RecordingStatusOut,
@@ -110,7 +111,7 @@ def delete_session(
 
     순서: storage_key 먼저 수집 → DB 커밋(CASCADE) → 커밋 성공 후 파일 삭제.
     """
-    keys = _collect_storage_keys(session.id, db)
+    keys = session_storage_keys(db, session.id)
     db.delete(session)
     db.commit()
     for key in keys:  # 커밋 성공 후에만 파일 삭제 (실패분은 best-effort)
@@ -118,28 +119,6 @@ def delete_session(
 
 
 # ── 헬퍼 ──────────────────────────────────────────────────────────────
-
-def _collect_storage_keys(session_id: str, db: Session) -> list[str]:
-    """세션에 딸린 모든 파일의 storage_key (자료·녹음·질문 TTS·답변 오디오)."""
-    keys: list[str] = []
-    material = db.get(models.Material, session_id)
-    if material is not None:
-        keys.append(material.storage_key)
-    recording = db.get(models.Recording, session_id)
-    if recording is not None:
-        keys.append(recording.storage_key)
-    q_rows = db.execute(
-        select(models.Question.tts_storage_key, models.Answer.audio_storage_key)
-        .join(models.Answer, models.Answer.question_id == models.Question.id, isouter=True)
-        .where(models.Question.session_id == session_id)
-    ).all()
-    for tts_key, answer_key in q_rows:
-        if tts_key:
-            keys.append(tts_key)
-        if answer_key:
-            keys.append(answer_key)
-    return keys
-
 
 def _to_detail(session: models.RehearsalSession, db: Session) -> SessionDetail:
     """세션 + 하위 리소스 상태 → SessionDetail (api-spec §4.1 형태).
