@@ -54,6 +54,12 @@ class VerifyBody(BaseModel):
     code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
 
 
+class VerifyResponse(BaseModel):
+    """POST /auth/email/verify 응답 (api-spec §2) — 멱등이라 항상 true."""
+
+    email_verified: bool
+
+
 class LoginRequest(BaseModel):
     """POST /auth/login 요청 (api-spec §2)."""
 

@@ -1,9 +1,6 @@
-import hashlib
-import logging
-import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Cookie, Depends, Header, Response
+from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, Header, Response
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -32,23 +29,30 @@ from app.schemas.auth import (
     TokenResponse,
     User,
     UserOut,
+    VerifyBody,
+    VerifyRequestBody,
+    VerifyResponse,
+)
+from app.services.email import send_verification_email
+from app.services.email_verification import (
+    MAX_ATTEMPTS,
+    RESEND_COOLDOWN,
+    issue_verification_code,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-logger = logging.getLogger("rehearsal.auth")
-
-# 이메일 인증코드 유효시간 (스코프 컷: 발송은 생략, 코드 저장 + 로그 출력만)
-_VERIFY_CODE_TTL = timedelta(minutes=10)
-
-
 
 @router.post("/signup", response_model=SignupResponse, status_code=201)
-def signup(body: SignupRequest, db: Session = Depends(get_db)) -> SignupResponse:
-    """회원가입 (api-spec §2): 미인증 유저 생성 + 인증코드 저장.
+def signup(
+    body: SignupRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> SignupResponse:
+    """회원가입 (api-spec §2): 미인증 유저 생성 + 인증코드 발송.
 
     - username/email 중복은 대소문자 무시 (DB 부분 유니크 인덱스와 동일 기준)
-    - 인증코드는 발송 없이 해시로 저장하고 개발용 로그로만 출력 (스코프 컷 합의)
+    - 발송은 BackgroundTasks(응답 무영향) — 실패해도 가입은 성공, 재발송으로 복구
     """
     # 1) 중복 선검사 — 명확한 에러 코드를 주기 위해 (레이스는 아래 IntegrityError가 최종 방어)
     if db.scalar(select(models.User.id).where(func.lower(models.User.username) == body.username.lower())):
@@ -62,21 +66,12 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)) -> SignupResponse
     except PasswordTooLongError as e:
         raise ApiError(400, "PASSWORD_TOO_LONG", str(e))
 
-    # 3) 미인증 유저 + 인증코드 생성 (한 트랜잭션)
+    # 3) 미인증 유저 생성
     user = models.User(
         username=body.username, password_hash=password_hash,
         name=body.name, email=body.email,
     )
     db.add(user)
-    db.flush()
-
-    code = f"{secrets.randbelow(1_000_000):06d}"  # 000000~999999
-    db.add(models.EmailVerification(
-        user_id=user.id,
-        code_hash=hashlib.sha256(code.encode()).hexdigest(),
-        expires_at=datetime.now(timezone.utc) + _VERIFY_CODE_TTL,
-    ))
-
     try:
         db.commit()
     except IntegrityError as e:  # 동시 가입 레이스 — 부분 유니크 인덱스가 잡아줌
@@ -84,13 +79,99 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)) -> SignupResponse
         taken = "EMAIL_TAKEN" if "users_email_key" in str(e.orig) else "USERNAME_TAKEN"
         raise ApiError(409, taken, "이미 사용 중인 아이디 또는 이메일이에요.")
 
-    # SMTP 미도입(스코프 컷) — 개발 중에는 서버 로그에서 코드를 확인한다
-    logger.info("이메일 인증코드(발송 생략, 개발용): %s -> %s", body.email, code)
+    # 4) 인증코드 발급(커밋 포함) + 발송. 발송이 느리거나 실패해도 응답은 그대로 201
+    code = issue_verification_code(db, user)
+    background_tasks.add_task(send_verification_email, user.email, code)
 
     return SignupResponse(user=UserOut(
         id=user.id, name=user.name, username=user.username,
         email=user.email, email_verified=user.email_verified_at is not None,
     ))
+
+
+def _find_user_by_email(db: Session, email: str) -> models.User | None:
+    """이메일로 활성 유저 조회 (대소문자 무시 — signup 중복 검사와 동일 기준)."""
+    return db.scalar(select(models.User).where(
+        func.lower(models.User.email) == email.lower(),
+        models.User.deleted_at.is_(None),
+    ))
+
+
+@router.post("/email/verify-request", status_code=204)
+def request_verification_code(
+    body: VerifyRequestBody,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> None:
+    """인증코드 재발송 (api-spec §2): 유저가 없어도·이미 인증돼도 같은 204.
+
+    204로 통일하는 이유 — 응답이 갈리면 "이 이메일이 가입돼 있나"를 무제한
+    조회할 수 있게 된다(계정 열거). 절대 404를 내지 말 것.
+    """
+    user = _find_user_by_email(db, body.email)
+    if user is None or user.email_verified_at is not None:
+        return  # 204 — 존재 여부·인증 여부 비노출 (멱등)
+
+    # 재발송 쿨다운: 마지막 발급(소비 여부 무관) 후 60초. 발송 스팸·Gmail 쿼터 보호
+    latest = db.scalar(
+        select(func.max(models.EmailVerification.created_at))
+        .where(models.EmailVerification.user_id == user.id)
+    )
+    if latest is not None:
+        remaining = RESEND_COOLDOWN - (datetime.now(timezone.utc) - latest)
+        if remaining.total_seconds() > 0:
+            retry_after = int(remaining.total_seconds()) + 1  # 올림 — 과소 안내 방지
+            raise ApiError(
+                429, "RATE_LIMITED", "잠시 후 다시 시도해주세요.",
+                details={"retry_after_seconds": retry_after},
+                headers={"Retry-After": str(retry_after)},
+            )
+
+    code = issue_verification_code(db, user)
+    background_tasks.add_task(send_verification_email, user.email, code)
+
+
+@router.post("/email/verify", response_model=VerifyResponse)
+def verify_email(body: VerifyBody, db: Session = Depends(get_db)) -> VerifyResponse:
+    """이메일 인증 (api-spec §2): 코드 대조 → email_verified_at 설정. 멱등.
+
+    유저 없음도 INVALID_CODE(400) — verify-request의 204와 같은 이유로 존재 여부를
+    숨긴다. attempt 검사는 반드시 대조보다 먼저(아니면 5회 초과 후에도 대조 시도 허용).
+    """
+    user = _find_user_by_email(db, body.email)
+    if user is None:
+        # 더미 bcrypt 1회로 "없는 이메일(즉시 400)"과 "틀린 코드(대조 후 400)"의
+        # 응답 시간을 맞춘다 — login의 타이밍 공격 방어와 동일 규율
+        verify_password(body.code, _TIMING_DUMMY_HASH)
+        raise ApiError(400, "INVALID_CODE", "코드가 올바르지 않아요.")
+    if user.email_verified_at is not None:
+        return VerifyResponse(email_verified=True)  # 멱등 — 이미 인증 완료
+
+    now = datetime.now(timezone.utc)
+    row = db.scalar(
+        select(models.EmailVerification)
+        .where(
+            models.EmailVerification.user_id == user.id,
+            models.EmailVerification.consumed_at.is_(None),
+            models.EmailVerification.expires_at > now,
+        )
+        .order_by(models.EmailVerification.created_at.desc())
+        .limit(1)
+    )
+    if row is None:
+        raise ApiError(400, "CODE_EXPIRED", "코드가 만료됐어요. 재발송해주세요.")
+    if row.attempt_count >= MAX_ATTEMPTS:  # 소진 — 만료와 동일 취급 (재발송 유도)
+        raise ApiError(400, "CODE_EXPIRED", "시도 횟수를 초과했어요. 재발송해주세요.")
+
+    if not verify_password(body.code, row.code_hash):
+        row.attempt_count += 1
+        db.commit()
+        raise ApiError(400, "INVALID_CODE", "코드가 올바르지 않아요.")
+
+    row.consumed_at = now
+    user.email_verified_at = now
+    db.commit()
+    return VerifyResponse(email_verified=True)
 
 
 # refresh 토큰 쿠키 설정 (spec §2 Web 응답 예시 그대로)
@@ -168,6 +249,13 @@ def login(
         raise ApiError(401, "INVALID_CREDENTIALS", "아이디 또는 비밀번호가 올바르지 않아요.")
     if not verify_password(body.password, user.password_hash):
         raise ApiError(401, "INVALID_CREDENTIALS", "아이디 또는 비밀번호가 올바르지 않아요.")
+
+    # 미인증 차단은 반드시 비밀번호 검증 **후** — 403은 "비밀번호는 맞는데 미인증"의
+    # 신호라서, FE가 재로그인 없이 곧바로 코드 입력 화면으로 보낼 수 있다 (spec §2).
+    # 비밀번호가 틀리면 위의 기존 401. refresh는 로그인을 통과한 세션만 도달하므로
+    # 검사 지점은 여기 한 곳뿐.
+    if user.email_verified_at is None:
+        raise ApiError(403, "EMAIL_NOT_VERIFIED", "이메일 인증을 완료해주세요.")
 
     return _issue_tokens(user, _parse_platform(x_client_platform), db, response)
 
