@@ -28,6 +28,18 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+# 앱 아이콘 생성 설정 — 원본 1장에서 Android/iOS/Web 아이콘 전부 생성.
+# 실행: dart run flutter_launcher_icons
+flutter_launcher_icons:
+  image_path: "assets/icons/malggori-app-icon.png"
+  android: true
+  ios: true
+  remove_alpha_ios: true # App Store 규격 — 알파 채널 제거
+  web:
+    generate: true
+    image_path: "assets/icons/malggori-app-icon.png"
 
 flutter:
   uses-material-design: true
