@@ -56,8 +56,12 @@ class LLMProvider(ABC):
         question: str,
         answer: str,
         depth: int,
+        persona: QuestionerPersona,
     ) -> QuestionDraft | None:
-        """직전 답변에 대한 꼬리질문. depth≥1이면 항상 None(A11), 불필요해도 None."""
+        """직전 답변에 대한 꼬리질문. depth≥1이면 항상 None(A11), 불필요해도 None.
+
+        persona: 부모 질문의 페르소나. 꼬리질문은 부모의 페르소나·말투를 그대로 승계한다.
+        """
         raise NotImplementedError
 
     @abstractmethod

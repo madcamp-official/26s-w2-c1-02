@@ -17,6 +17,7 @@ from app.core import storage
 from app.db.models import Material, Team, TeamMember, User
 from app.db.session import SessionLocal
 from app.main import app
+from tests.conftest import mark_email_verified
 
 client = TestClient(app)
 
@@ -39,6 +40,7 @@ def _pdf(page_texts: list[str]) -> bytes:
 def _mkuser(u: str) -> str:
     r = client.post("/api/v1/auth/signup", json={"name": u, "username": u,
                     "password": "matr-pass-123", "email": f"{u}@t.io"})
+    mark_email_verified(u)  # 로그인 차단(403) 우회 — email-verification-plan 작업 6
     return r.json()["user"]["id"]
 
 
@@ -122,6 +124,34 @@ class TestUploadFailureParsing:
         m = _material(sid)
         assert m.status == "failed"
         assert m.error_code == "PDF_PARSE_ERROR"  # retry 대상
+
+    def test_page_extraction_error_wrapped_as_parse_error(self, monkeypatch):
+        """fitz.open은 성공하지만 페이지 추출이 raw 예외를 던지는 PDF(부분 손상)
+        → 파서가 문서화된 계약대로 PdfParseError로 변환한다."""
+        from app.services.material import PdfParseError, parse_pdf_to_slides
+
+        def boom(self, *a, **kw):
+            raise RuntimeError("malformed page stream")
+
+        monkeypatch.setattr(fitz.Page, "get_text", boom)
+        with pytest.raises(PdfParseError):
+            parse_pdf_to_slides(_pdf(["ok page"]))
+
+    def test_unexpected_job_exception_fails_not_stuck_processing(self, ctx, monkeypatch):
+        """파싱 잡에서 예상 못한 예외가 나도 processing에 갇히지 않고 failed로
+        끝난다(retry는 failed만 받으므로 stuck processing엔 복구 경로가 없다)."""
+        import app.api.routes.materials as mat
+        sid, _, _ = ctx
+
+        def boom(_pdf_bytes):
+            raise RuntimeError("unexpected bug in parser")
+
+        monkeypatch.setattr(mat, "parse_pdf_to_slides", boom)
+        r = _upload(sid, _pdf(["ok page"]))
+        assert r.status_code == 202
+        m = _material(sid)
+        assert m.status == "failed"  # processing에 갇히면 회귀
+        assert m.error_code == "PDF_PARSE_ERROR"
 
 
 class TestUploadValidation:

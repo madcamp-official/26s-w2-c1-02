@@ -21,11 +21,13 @@ class ApiError(Exception):
         code: str,
         message: str,
         details: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,  # 예: 429의 Retry-After (spec §2)
     ) -> None:
         self.status_code = status_code
         self.code = code
         self.message = message
         self.details = details or {}
+        self.headers = headers
         super().__init__(message)
 
 
@@ -33,6 +35,7 @@ async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": {"code": exc.code, "message": exc.message, "details": exc.details}},
+        headers=exc.headers,
     )
 
 

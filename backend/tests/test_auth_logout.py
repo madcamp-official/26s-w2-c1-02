@@ -19,6 +19,7 @@ from app.core.security import hash_refresh_token
 from app.db.models import RefreshToken, User
 from app.db.session import SessionLocal
 from app.main import app
+from tests.conftest import mark_email_verified
 
 client = TestClient(app)                              # Native(본문)용
 web = TestClient(app, base_url="https://testserver")  # Web(Secure 쿠키)용
@@ -39,6 +40,7 @@ def test_user():
         "password": CREDS["password"], "email": "lotest@test.io",
     })
     assert res.status_code == 201
+    mark_email_verified(CREDS["username"])  # 로그인 차단(403) 우회
     web.cookies.clear()
     yield res.json()["user"]
     with SessionLocal() as db:

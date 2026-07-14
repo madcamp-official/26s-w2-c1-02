@@ -19,6 +19,7 @@ from app.db.enums import (
 from app.db.models import Answer, Question, RehearsalSession, Team, TeamMember, User
 from app.db.session import SessionLocal
 from app.main import app
+from tests.conftest import mark_email_verified
 
 client = TestClient(app)
 
@@ -26,6 +27,7 @@ client = TestClient(app)
 def _mkuser(u: str) -> str:
     r = client.post("/api/v1/auth/signup", json={"name": u, "username": u,
                     "password": "qget-pass-123", "email": f"{u}@t.io"})
+    mark_email_verified(u)  # 로그인 차단(403) 우회 — email-verification-plan 작업 6
     return r.json()["user"]["id"]
 
 

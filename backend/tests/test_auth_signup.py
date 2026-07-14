@@ -68,7 +68,7 @@ class TestSignupSuccess:
             ev = db.scalar(select(EmailVerification).where(EmailVerification.user_id == uid))
             assert ev is not None, "인증코드 행이 안 생김"
             assert ev.consumed_at is None
-            assert len(ev.code_hash) == 64  # sha256 hex — 원문 6자리가 아님
+            assert ev.code_hash.startswith("$2")  # bcrypt — 원문 6자리 평문이 아님
             assert ev.attempt_count == 0
 
 

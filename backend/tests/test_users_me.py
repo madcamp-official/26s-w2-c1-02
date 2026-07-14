@@ -26,6 +26,7 @@ from app.db import models
 from app.db.models import RefreshToken, SocialAccount, Team, TeamMember, User
 from app.db.session import SessionLocal
 from app.main import app
+from tests.conftest import mark_email_verified
 
 client = TestClient(app)
 
@@ -55,6 +56,7 @@ def _signup(username: str, email: str, password: str = "um-pass-12345",
     assert res.status_code == 201, res.text
     user = res.json()["user"]
     _user_ids.append(user["id"])
+    mark_email_verified(username)  # 로그인 차단(403) 우회
     return user
 
 
@@ -163,9 +165,21 @@ class TestGetMe:
         assert body["name"] == "마이테스트"
         assert body["email"] == "umtest@test.io"
 
-    def test_email_verified_false_for_unverified_signup(self, test_user):
-        """갓 가입한 유저는 email_verified_at=None → email_verified=False."""
-        res = _call("GET", ME_URL, headers={"Authorization": f"Bearer {_token()}"})
+    def test_email_verified_false_when_not_verified(self, test_user):
+        """email_verified_at=None → email_verified=False (파생 규약 고정).
+
+        로그인 강제 도입 후 미인증 유저는 로그인 자체가 403이므로, 토큰을 먼저
+        받고 인증 표식을 되돌려 '이미 로그인돼 있던 미인증 세션'을 재현한다
+        (기존 세션은 차단되지 않는다는 plan §5-4 노트의 실제 시나리오)."""
+        token = _token()
+        with SessionLocal() as db:
+            db.execute(
+                User.__table__.update()
+                .where(User.id == test_user["id"])
+                .values(email_verified_at=None)
+            )
+            db.commit()
+        res = _call("GET", ME_URL, headers={"Authorization": f"Bearer {token}"})
         assert res.json()["email_verified"] is False
 
     def test_email_verified_true_when_verified(self, test_user):
@@ -377,6 +391,7 @@ class TestChangePassword:
             "name": "마이테스트2", "username": "umtest2_user",
             "password": "um2-pass-12345", "email": "umtest2@test.io",
         })
+        mark_email_verified("umtest2_user")  # 로그인 차단(403) 우회
         other_refresh = client.post("/api/v1/auth/login",
             json={"username": "umtest2_user", "password": "um2-pass-12345"},
             headers={"X-Client-Platform": "ios"}).json()["refresh_token"]
