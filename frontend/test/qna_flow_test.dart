@@ -63,7 +63,7 @@ void main() {
 
     // 답변 제출은 202 접수만 — 결과는 폴링으로.
     await repo.submitAnswer(sid, q1.id,
-        fileName: 'answer.wav', bytes: Uint8List(44));
+        fileName: 'answer.wav', bytes: Uint8List(44), durationSeconds: 12);
 
     // 1차 질문(order 1, 홀수) → mock이 꼬리질문 생성 + current 이동.
     final withFollow = await pollUntil((q) => q.questions.length > 1);
@@ -77,7 +77,7 @@ void main() {
         q.questions.firstWhere((x) => x.id == follow.id).tts.status ==
         AsyncStatus.ready);
     await repo.submitAnswer(sid, follow.id,
-        fileName: 'answer.wav', bytes: Uint8List(44));
+        fileName: 'answer.wav', bytes: Uint8List(44), durationSeconds: 12);
 
     final ended = await pollUntil((q) => q.status == QnaStatus.ended);
     expect(ended.endedReason, EndedReason.countReached);
@@ -134,7 +134,8 @@ void main() {
 
     // 1) 첫 제출은 503 → 예외. 서버엔 아무것도 반영 안 됨.
     await expectLater(
-      flakyRepo.submitAnswer(sid, q1.id, fileName: 'answer.wav', bytes: bytes),
+      flakyRepo.submitAnswer(sid, q1.id,
+          fileName: 'answer.wav', bytes: bytes, durationSeconds: 12),
       throwsA(isA<ApiException>()),
     );
     final afterFail =
@@ -142,7 +143,8 @@ void main() {
     expect(afterFail.answer?.status ?? AnswerStatus.pending, AnswerStatus.pending);
 
     // 2) 같은 바이트 재제출 → 성공 → processing/ready로 진행.
-    await flakyRepo.submitAnswer(sid, q1.id, fileName: 'answer.wav', bytes: bytes);
+    await flakyRepo.submitAnswer(sid, q1.id,
+        fileName: 'answer.wav', bytes: bytes, durationSeconds: 12);
     final afterRetry = await pollUntil((q) {
       final a = q.questions.firstWhere((x) => x.id == q1.id).answer;
       return a != null && a.status != AnswerStatus.pending;

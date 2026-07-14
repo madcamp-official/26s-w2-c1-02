@@ -146,9 +146,12 @@ class SessionRepository {
     String questionId, {
     required String fileName,
     required List<int> bytes,
+    required int durationSeconds,
   }) =>
       _api.upload('/sessions/$sessionId/qna/questions/$questionId/answer',
-          fileName: fileName, bytes: bytes);
+          fileName: fileName,
+          bytes: bytes,
+          fields: {'duration_seconds': '$durationSeconds'});
 
   /// 답변 스킵/패스. [reason]='timeout'은 답변 시작 시간초과 자동 패스
   /// (spec §4.4 — 서버가 ended_reason 확정에 사용).
