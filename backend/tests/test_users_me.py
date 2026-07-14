@@ -41,9 +41,8 @@ ENDPOINTS = [
 ]
 
 # 아직 미구현(501 골격)인 엔드포인트 — 구현되면 여기서 빼고 기능 테스트로 대체한다.
-# 작업 3: GET /me 구현 완료 → 목록에서 제외.
+# 작업 3: GET /me · 작업 4: PATCH /me 구현 완료 → 목록에서 제외.
 PENDING_ENDPOINTS = [
-    ("PATCH", ME_URL),
     ("PATCH", PW_URL),
     ("DELETE", ME_URL),
 ]
@@ -82,8 +81,12 @@ def _expired_token(user_id: str) -> str:
     )
 
 
-def _call(method: str, url: str, headers: dict | None = None):
-    return client.request(method, url, headers=headers or {})
+def _call(method: str, url: str, headers: dict | None = None, json=None):
+    return client.request(method, url, headers=headers or {}, json=json)
+
+
+def _auth(token: str | None = None) -> dict:
+    return {"Authorization": f"Bearer {token or _token()}"}
 
 
 class TestRouteRegistration:
@@ -190,6 +193,93 @@ class TestGetMe:
         res = _call("GET", ME_URL, headers={"Authorization": f"Bearer {token}"})
         assert res.status_code == 401
         assert res.json()["error"]["code"] == "UNAUTHORIZED"
+
+
+class TestUpdateMe:
+    """작업 4 — PATCH /users/me (닉네임 수정) 기능 검증."""
+
+    def test_updates_nickname(self, test_user):
+        res = _call("PATCH", ME_URL, headers=_auth(), json={"name": "바뀐닉"})
+        assert res.status_code == 200
+        body = res.json()
+        assert body["name"] == "바뀐닉"
+        # 나머지 필드는 그대로
+        assert body["id"] == test_user["id"]
+        assert body["username"] == CREDS["username"]
+        assert body["email"] == "umtest@test.io"
+        assert set(body) == {"id", "name", "username", "email", "email_verified"}
+
+    def test_change_persists(self, test_user):
+        """수정이 DB에 반영돼 이후 GET에서도 보인다."""
+        _call("PATCH", ME_URL, headers=_auth(), json={"name": "영속닉"})
+        res = _call("GET", ME_URL, headers=_auth())
+        assert res.json()["name"] == "영속닉"
+
+    def test_name_stripped_server_side(self, test_user):
+        """서버가 앞뒤 공백을 제거해 저장한다(스키마 strip_name)."""
+        res = _call("PATCH", ME_URL, headers=_auth(), json={"name": "  공백닉  "})
+        assert res.json()["name"] == "공백닉"
+
+    @pytest.mark.parametrize("bad", [
+        {"name": ""},            # 빈 이름
+        {"name": "   "},         # 공백만
+        {"name": "가" * 31},     # 30자 초과
+        {},                      # name 누락
+    ])
+    def test_invalid_body_422(self, test_user, bad):
+        res = _call("PATCH", ME_URL, headers=_auth(), json=bad)
+        assert res.status_code == 422
+        assert res.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_username_change_rejected(self, test_user):
+        """username 등 다른 필드 변경 시도는 extra=forbid로 422 — 닉네임만 수정 가능."""
+        res = _call("PATCH", ME_URL, headers=_auth(),
+                    json={"name": "새닉", "username": "hacker"})
+        assert res.status_code == 422
+        # username은 바뀌지 않았다
+        assert _call("GET", ME_URL, headers=_auth()).json()["username"] == CREDS["username"]
+
+    def test_no_token_no_body_is_401_not_422(self, test_user):
+        """인증이 바디 검증보다 먼저 — 무토큰+무바디 PATCH는 401(인증)이지 422가 아니다.
+        (작업 2 감사에서 예고한 순서 계약 고정)."""
+        res = _call("PATCH", ME_URL)  # 토큰·바디 둘 다 없음
+        assert res.status_code == 401
+        assert res.json()["error"]["code"] == "UNAUTHORIZED"
+
+    def test_token_but_no_body_is_422(self, test_user):
+        """인증은 됐지만 바디 없음 → 422 (name 필수)."""
+        res = _call("PATCH", ME_URL, headers=_auth())
+        assert res.status_code == 422
+
+    def test_preserves_email_verified(self, test_user):
+        """닉네임만 바꾼다 — 이메일 인증 상태(email_verified_at)는 건드리지 않는다."""
+        with SessionLocal() as db:
+            db.execute(User.__table__.update().where(User.id == test_user["id"])
+                       .values(email_verified_at=datetime.now(timezone.utc)))
+            db.commit()
+        res = _call("PATCH", ME_URL, headers=_auth(), json={"name": "여전히인증됨"})
+        assert res.status_code == 200
+        assert res.json()["email_verified"] is True
+        # DB에도 인증 시각이 그대로 남아 있다
+        with SessionLocal() as db:
+            u = db.get(User, test_user["id"])
+            assert u.email_verified_at is not None and u.name == "여전히인증됨"
+
+    def test_anonymized_user_cannot_resurrect_name(self, test_user):
+        """탈퇴(익명화)된 유저가 유효 토큰으로 PATCH해도 401 — get_current_user가
+        deleted_at으로 막으므로 NULL이 된 name을 되살릴 수 없다(GET과 대칭 방어)."""
+        token = _token()  # 활성 상태에서 유효 토큰 확보
+        with SessionLocal() as db:
+            db.execute(User.__table__.update().where(User.id == test_user["id"]).values(
+                username=None, password_hash=None, name=None, email=None,
+                deleted_at=datetime.now(timezone.utc),
+            ))
+            db.commit()
+        res = _call("PATCH", ME_URL, headers=_auth(token), json={"name": "부활시도"})
+        assert res.status_code == 401
+        # name이 되살아나지 않고 NULL로 유지된다
+        with SessionLocal() as db:
+            assert db.get(User, test_user["id"]).name is None
 
 
 class TestContractLocks:
