@@ -14,7 +14,7 @@
 발표 1회 = **세션(Session)** 하나. 세션은 아래 단계를 거치며, 무거운 단계는 모두 비동기로 처리됩니다.
 
 ```
-PDF 업로드 ──(파싱)──▶ slides.json
+자료(PDF·PPTX) 업로드 ──(파싱)──▶ slides.json
                                    ╲
 발표 녹음/업로드 ──(STT+정렬)──▶ transcript.json(원문) ──▶ AI 질문 생성 ──▶ 질의응답 루프 ──▶ 세션 저장 ──▶ 분석 리포트
                                    /
@@ -29,7 +29,7 @@ PDF 업로드 ──(파싱)──▶ slides.json
 | --- | ------------ | --------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | A1  | 인증 방식        | JWT (access 짧은 수명 + refresh) + 소셜 OAuth                   | **refresh 토큰 전달은 클라이언트별로 분기**: Web = `Set-Cookie`(httpOnly), Native(iOS/Android) = 응답 본문. `X-Client-Platform` 헤더로 구분 (§2). |
 | A2  | 비동기 처리 모델    | **리소스 내 상태 필드 + 클라이언트 폴링**(1~2s)                          | 별도 `/jobs` 서브시스템 대신 리소스 GET으로 상태 확인. SSE는 선택적 확장(§7)                                       |
-| A3  | PDF 파싱       | 비동기 (`material.status`)                                   | 실패/재업로드 UI 필요 → 비동기                                                                       |
+| A3  | 자료(PDF·PPTX) 파싱 | 비동기 (`material.status`)                                   | 실패/재업로드 UI 필요 → 비동기                                                                       |
 | A4  | STT (발표·답변)  | 비동기 (`transcript.status`, `answer.status`)               | 원문(raw) 전사만 수행 — LLM 정제 패스 없음(v0.3). 답변 STT 상태 필드명은 answer.status로 통일. 타임스탬프는 ForcedAligner 산출                                            |
 | A5  | AI 질문 생성     | 비동기 (`session.status = generating_questions`)            | 동기 가능하나 STT 의존이라 비동기로 통일                                                                  |
 | A6  | TTS (질문 음성)  | 비동기 (`question.tts.status`)                               | self-hosted(VoxCPM2) 동시성 한계 → 큐 가정                                                        |
@@ -184,10 +184,10 @@ status ∈ { queued, processing, ready, failed }   // 모든 async 리소스 공
 
 | 종류       | 형식               | 최대             |
 | -------- | ---------------- | -------------- |
-| 발표 자료    | PDF (텍스트 추출 가능본) | 20 MB · 50 페이지 |
+| 발표 자료    | PDF · PPTX (텍스트 추출 가능본, 레거시 .ppt 미지원) | 20 MB · 50 페이지 |
 | 발표/답변 녹음 | mp3 · wav · m4a · **webm**(v0.4-draft) | 60 분 · 200 MB  |
 
-스캔본/이미지 PDF는 `422 UNPROCESSABLE_PDF`로 거부(기본값; OCR은 후속).
+스캔본/이미지 PDF는 `422 UNPROCESSABLE_PDF`, 텍스트 없는 PPTX는 `422 UNPROCESSABLE_PPTX`로 거부(기본값; OCR은 후속).
 
 > **webm 추가(v0.4-draft, FE 제안 · BE 합의 필요):** 브라우저 MediaRecorder는 m4a를 만들 수 없어 웹 폴백 녹음의 산출물이 webm/opus. STT는 ffmpeg 디코딩이라 추가 비용 없음. FE 기본 경로는 PCM 스트림 → **wav** 생성이므로 webm은 스트리밍 미지원 브라우저 폴백에서만 발생.
 
@@ -312,7 +312,7 @@ stateDiagram-v2
     generating_questions --> failed: 생성 실패(재시도 가능)
 ```
 
-> `material`(PDF)은 세션 상태와 **독립적으로** 파싱됩니다(`session.material.status`). 질문 생성 시 자료가 있으면 `material.status = ready`를 대기합니다.
+> `material`(PDF·PPTX)은 세션 상태와 **독립적으로** 파싱됩니다(`session.material.status`). 질문 생성 시 자료가 있으면 `material.status = ready`를 대기합니다.
 > **꼬리질문**은 세션 상태를 바꾸지 않고 `qna` 내부에서 비동기로 처리됩니다(§4.4).
 
 ### 4.1 세션 CRUD (F: 권한 + owner)
@@ -359,11 +359,11 @@ stateDiagram-v2
 ```
 > `report`는 `qna/end` 이후 `{ "status": "queued|processing|ready|failed" }`로 채워집니다.
 
-### 4.2 발표 자료 (PDF → slides.json)
+### 4.2 발표 자료 (PDF·PPTX → slides.json)
 
 | Method | Path                                   | 설명                                        |
 | ------ | -------------------------------------- | ----------------------------------------- |
-| POST   | `/sessions/{sessionId}/material`       | PDF 업로드(multipart) → **비동기 파싱 시작**(`202`) |
+| POST   | `/sessions/{sessionId}/material`       | 자료(PDF·PPTX) 업로드(multipart) → **비동기 파싱 시작**(`202`) |
 | GET    | `/sessions/{sessionId}/material`       | 파싱 상태 + 슬라이드(페이지·텍스트)                     |
 | POST   | `/sessions/{sessionId}/material/retry` | 파싱 재시도                                    |
 | DELETE | `/sessions/{sessionId}/material`       | 자료 삭제(자료 없이 진행 허용)                        |
@@ -380,7 +380,7 @@ stateDiagram-v2
 }
 ```
 
-스캔본 등 실패: `status:"failed"`, `error:{ code:"UNPROCESSABLE_PDF", message:"텍스트를 읽을 수 없어요." }`.
+스캔본 등 실패: `status:"failed"`, `error:{ code:"UNPROCESSABLE_PDF", message:"텍스트를 읽을 수 없어요." }` (PPTX는 `UNPROCESSABLE_PPTX`).
 
 ### 4.3 발표 녹음 & STT (→ transcript.json)
 
@@ -614,7 +614,7 @@ HTTP/1.1 202 Accepted
 | `INVITE_EXPIRED`                                  | 410     | 초대 만료                  |
 | `FILE_TOO_LARGE`                                  | 413     | 용량 초과                  |
 | `UNSUPPORTED_MEDIA`                               | 415     | 형식 미지원                 |
-| `UNPROCESSABLE_PDF`                               | 422     | 스캔본/텍스트 추출 불가          |
+| `UNPROCESSABLE_PDF` / `UNPROCESSABLE_PPTX`        | 422     | 스캔본/텍스트 추출 불가          |
 | `STT_FAILED` / `TTS_FAILED` / `GENERATION_FAILED` | 503     | 모델·외부 API 오류(재시도)      |
 | `EMAIL_NOT_VERIFIED`                              | 403     | 이메일 인증 미완료(미인증 유저 로그인 → 코드 입력 화면으로) |
 | `INVALID_CODE`                                    | 400     | 이메일 인증코드 불일치           |

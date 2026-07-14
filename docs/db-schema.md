@@ -33,7 +33,7 @@ erDiagram
     teams ||--o| team_invite_links : "활성 링크(≤1)"
     teams ||--o{ sessions : "발표 세션"
     users ||--o{ sessions : "owner(발표자)"
-    sessions ||--o| materials : "PDF 자료(≤1)"
+    sessions ||--o| materials : "자료 PDF·PPTX(≤1)"
     sessions ||--o| recordings : "발표 녹음(≤1)"
     sessions ||--o| transcripts : "전사(≤1)"
     sessions ||--o{ questions : "질문"
@@ -331,7 +331,7 @@ CREATE TABLE materials (
     page_count      smallint CHECK (page_count <= 50),                             -- §1.3: 50p
     storage_key     text NOT NULL,
     slides          jsonb,                           -- ready 시: [{"page":1,"text":"..."}] (§6.1)
-    error_code      text,                            -- 예: UNPROCESSABLE_PDF (스캔본)
+    error_code      text,                            -- 예: UNPROCESSABLE_PDF|PPTX (스캔본·이미지 덱)
     error_message   text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now()
@@ -558,7 +558,7 @@ ORDER BY joined_at, user_id LIMIT 1;
 
 | 삭제 대상 | DB cascade | 오브젝트 스토리지(앱 책임) |
 |---|---|---|
-| 세션 | materials → recordings → transcripts → questions(+answers) → reports(+type_scores), `current_question_id` SET NULL | PDF·발표녹음·질문TTS·답변오디오 파일 삭제 |
+| 세션 | materials → recordings → transcripts → questions(+answers) → reports(+type_scores), `current_question_id` SET NULL | 자료(PDF·PPTX)·발표녹음·질문TTS·답변오디오 파일 삭제 |
 | 팀 | sessions 전체(위 연쇄 포함) + 멤버십 + 초대 | 위 전체 |
 | 질문(꼬리 포함) | 자식 꼬리질문·답변 | TTS·답변 오디오 |
 | 유저(탈퇴) | **cascade 없음** — 익명화(§7.1) | 없음(세션 보존) |
