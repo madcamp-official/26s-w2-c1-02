@@ -233,7 +233,34 @@ class Recording(Base):
     storage_key: Mapped[str] = mapped_column(Text)
     started_at: Mapped[datetime | None] = mapped_column(timestamptz)
     ended_at: Mapped[datetime | None] = mapped_column(timestamptz)
+    total_chunks: Mapped[int | None] = mapped_column(Integer)  # 청크 완료 시 기대 청크 수(§4.3.1); 일괄 업로드는 NULL
     created_at: Mapped[datetime] = mapped_column(timestamptz, server_default=FetchedValue())
+
+
+class RecordingChunk(Base):
+    """실시간 녹음 청크 (api-spec §4.3.1). (session_id, seq) 멱등 upsert.
+
+    segments는 청크-로컬 타임스탬프 그대로 — /recording/complete 병합 시
+    offset_seconds/overlap_seconds로 절대 시각 보정 + 앞겹침 절단(③·④)."""
+
+    __tablename__ = "recording_chunks"
+
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True
+    )
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True)
+    offset_seconds: Mapped[float] = mapped_column(REAL)
+    overlap_seconds: Mapped[float] = mapped_column(REAL, server_default=FetchedValue())
+    duration_seconds: Mapped[float] = mapped_column(REAL)
+    storage_key: Mapped[str] = mapped_column(Text)
+    status: Mapped[AsyncStatus] = mapped_column(
+        pg_enum(AsyncStatus, "async_status"), server_default=FetchedValue()
+    )
+    segments: Mapped[list | None] = mapped_column(JSONB)  # 청크-로컬 [{"start":..,"end":..,"text":..}]
+    error_code: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(timestamptz, server_default=FetchedValue())
+    updated_at: Mapped[datetime] = mapped_column(timestamptz, server_default=FetchedValue())
 
 
 class Transcript(Base):

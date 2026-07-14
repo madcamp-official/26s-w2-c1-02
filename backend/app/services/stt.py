@@ -213,6 +213,38 @@ def _shift_and_trim(segments: list[dict], offset: float, *, is_first: bool, is_l
     return out
 
 
+def merge_chunk_segments(chunks: list[dict]) -> list[dict]:
+    """전송 청크별 STT 결과(청크-로컬)를 절대 시각으로 병합한다(api-spec §4.3.1 ③·④).
+
+    각 청크 dict: {"offset": 초, "overlap": 앞겹침 초, "segments": [청크-로컬 {start,end,text}]}.
+    chunks는 seq 오름차순·연속(누락 없음)이어야 한다 — 누락 청크 처리는 호출자 몫
+    (전체 파일 폴백, ②).
+
+    ⚠️ 겹침 방향(③): FE 청크는 겹침이 **앞**에 붙는다(청크 i 시작 = offset_i, 앞쪽
+    overlap_i 만큼 이전 청크와 겹침). stt.py 내부 분할의 뒤겹침 하드코딩 산식(60·4)을
+    재사용하지 않고, 각 청크가 보낸 offset/overlap 메타로 절단창을 계산한다.
+    경계는 겹침 중점(offset + overlap/2)에서 자르고, 세그먼트는 중점(mid)이 속한
+    청크가 채택한다(중복·반토막 방지 — _shift_and_trim과 같은 규칙)."""
+    out: list[dict] = []
+    n = len(chunks)
+    for i, c in enumerate(chunks):
+        offset = c["offset"]
+        lo = float("-inf") if i == 0 else offset + c["overlap"] / 2
+        if i == n - 1:
+            hi = float("inf")
+        else:
+            nxt = chunks[i + 1]
+            hi = nxt["offset"] + nxt["overlap"] / 2
+        for s in c["segments"] or []:
+            start = s["start"] + offset
+            end = s["end"] + offset
+            mid = (start + end) / 2
+            if lo <= mid < hi:
+                out.append({"start": round(start, 3), "end": round(end, 3), "text": s["text"]})
+    out.sort(key=lambda w: (w["start"], w["end"]))
+    return out
+
+
 # ── 표시 텍스트 정렬 + 문장급 그룹화 ────────────────────────────────────────
 #
 # ForcedAligner 스탬프는 형태소 단위('발표'+'를')·무구두점이라 그대로 이으면
