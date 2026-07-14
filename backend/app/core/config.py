@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     # Vertex AI 엔드포인트 사용 여부. AI Studio 무료 키도 이제 "AQ." 형식으로 발급되어
     # 키 접두사로 경로를 추정할 수 없다 — 무료(Gemini API) 키면 false(기본), Vertex 키만 true.
     gemini_use_vertex: bool = False
+    # Gemini 호출 1건 상한(초). 기본 미설정 시 SDK 기본이 사실상 무제한이라, 응답이
+    # 늦어지면 질문 생성 잡이 오래 매달린다. 이 시간이 지나면 SDK가 에러를 던지고
+    # run_generate가 세션을 failed로 흡수 → 폴링에서 '생성 실패'로 빠르게 노출된다.
+    gemini_timeout_seconds: int = 60
 
     @property
     def cors_origin_list(self) -> list[str]:

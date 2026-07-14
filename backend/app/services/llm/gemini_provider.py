@@ -128,7 +128,13 @@ class GeminiLLMProvider(LLMProvider):
         # 엔드포인트는 설정으로 명시(GEMINI_USE_VERTEX). 과거엔 "AQ." 접두사로 Vertex
         # express 키를 판별했지만, AI Studio 무료 키도 AQ. 형식으로 발급되면서
         # 접두사 추정이 무료 키를 결제 필수 경로(aiplatform)로 잘못 보내게 됐다.
-        self._client = genai.Client(vertexai=settings.gemini_use_vertex, api_key=key)
+        # 호출 상한을 명시한다(HttpOptions.timeout은 밀리초). 미설정 시 SDK 기본이
+        # 사실상 무제한이라 응답 지연 시 질문 생성 잡이 오래 매달리고 세션이 계속
+        # generating_questions에 갇힌다. 상한을 넘으면 SDK가 에러를 던져 failed로 흡수된다.
+        self._client = genai.Client(
+            vertexai=settings.gemini_use_vertex, api_key=key,
+            http_options=types.HttpOptions(timeout=settings.gemini_timeout_seconds * 1000),
+        )
         self._model = settings.gemini_model
 
     async def generate_questions(
