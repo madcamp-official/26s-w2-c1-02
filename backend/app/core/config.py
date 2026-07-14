@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     llm_provider: str = "mock"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+    # Vertex AI 엔드포인트 사용 여부. AI Studio 무료 키도 이제 "AQ." 형식으로 발급되어
+    # 키 접두사로 경로를 추정할 수 없다 — 무료(Gemini API) 키면 false(기본), Vertex 키만 true.
+    gemini_use_vertex: bool = False
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -125,8 +125,10 @@ class GeminiLLMProvider(LLMProvider):
         key = settings.gemini_api_key
         if not key:
             raise ValueError("GEMINI_API_KEY가 비어 있습니다. backend/.env를 확인하세요.")
-        # "AQ." 접두 = Vertex AI express mode 키 → vertexai 엔드포인트 필요.
-        self._client = genai.Client(vertexai=key.startswith("AQ."), api_key=key)
+        # 엔드포인트는 설정으로 명시(GEMINI_USE_VERTEX). 과거엔 "AQ." 접두사로 Vertex
+        # express 키를 판별했지만, AI Studio 무료 키도 AQ. 형식으로 발급되면서
+        # 접두사 추정이 무료 키를 결제 필수 경로(aiplatform)로 잘못 보내게 됐다.
+        self._client = genai.Client(vertexai=settings.gemini_use_vertex, api_key=key)
         self._model = settings.gemini_model
 
     async def generate_questions(
