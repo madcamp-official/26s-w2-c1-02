@@ -73,7 +73,7 @@ class _LoginPageState extends State<LoginPage> {
                 ),
                 const SizedBox(height: 28),
                 const Text('당신의 발표를 더 완벽하게',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
                 const Text('말꼬리',
                     style: TextStyle(
                         fontSize: 24,
@@ -96,13 +96,13 @@ class _LoginPageState extends State<LoginPage> {
                   height: 56,
                   child: FilledButton(
                     style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.primary,
+                      backgroundColor: AppColors.accent,
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14)),
                     ),
                     onPressed: loading ? null : _login,
                     child: Text(loading ? '로그인 중…' : '로그인',
-                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 18)),
                   ),
                 ),
                 const SizedBox(height: 14),
