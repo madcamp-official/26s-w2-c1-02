@@ -140,6 +140,9 @@ class _QuestionViewState extends State<_QuestionView> {
   /// 제출 대기 중인 녹음 바이트 — 업로드 실패 시 재녹음 없이 재제출용.
   List<int>? _answerBytes;
 
+  /// 제출 대기 중인 녹음 길이(초) — 답변 업로드의 duration_seconds 폼 필드.
+  int _answerDuration = 0;
+
   /// 답변 시작 대기 카운트다운.
   Timer? _waitTimer;
   int _waitElapsed = 0;
@@ -249,6 +252,7 @@ class _QuestionViewState extends State<_QuestionView> {
       final result = await recorder.stop();
       _recorder = null;
       _answerBytes = result.wavBytes; // 유실 방지: 업로드 성공 전까지 보관
+      _answerDuration = result.durationSeconds.round();
     } catch (e) {
       _recorder = null;
       _answerBytes = null;
@@ -272,6 +276,7 @@ class _QuestionViewState extends State<_QuestionView> {
         _q.id,
         fileName: 'answer.wav',
         bytes: bytes,
+        durationSeconds: _answerDuration,
       );
       _answerBytes = null;
       if (mounted) setState(() => _phase = _Phase.done);
