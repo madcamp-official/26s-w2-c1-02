@@ -1,7 +1,14 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # GET /users/me 응답은 auth의 UserOut을 그대로 재사용한다 (id·name·username·email·email_verified).
-# 활성 유저는 DDL CHECK로 name/username/email이 항상 존재하므로 non-null UserOut로 충분.
+# UserOut은 username·email을 non-null로 본다. 이게 안전한 근거:
+#   - DDL은 활성 유저의 name만 NOT NULL로 강제한다(§3.1 CHECK). username·email은
+#     소셜 전용 유저의 경우 NULL이 될 수 있다.
+#   - 그러나 현재 소셜 로그인은 목 스텁(auth.login_with_provider)이라 실제 access
+#     토큰을 발급하지 않는다. get_current_user가 인정하는 실 유저는 signup 경유뿐이고,
+#     signup은 username·email을 필수로 받는다 → 실제로 도달 가능한 활성 유저는 둘 다 존재.
+# ⚠️ 실 소셜 로그인을 붙이면(username NULL 유저가 JWT를 받게 되면) 이 재사용은 500을
+#    낸다. 그때는 username·email을 Optional로 둔 전용 MeOut로 교체할 것.
 from app.schemas.auth import UserOut
 
 __all__ = ["UserOut", "ProfileUpdateRequest", "PasswordChangeRequest"]

@@ -35,6 +35,27 @@ class TestGetResponseReuse:
                     email="a@b.com", email_verified=False)
         assert u.email_verified is False
 
+    @pytest.mark.parametrize("missing", ["id", "name", "username", "email", "email_verified"])
+    def test_all_fields_required(self, missing):
+        """UserOut 재사용 계약: 5개 필드 전부 필수. 하나라도 빠지면 구성 실패.
+
+        특히 username·email은 non-null — 소셜 전용(username NULL) 유저를 이 응답에
+        태우려면 전용 MeOut가 필요하다는 계약을 회귀로 고정(파일 상단 ⚠️ 주석)."""
+        body = {"id": "usr_1", "name": "n", "username": "u",
+                "email": "a@b.com", "email_verified": True}
+        del body[missing]
+        with pytest.raises(ValidationError):
+            UserOut(**body)
+
+    @pytest.mark.parametrize("field", ["username", "email"])
+    def test_username_email_reject_none(self, field):
+        """non-null 계약 확인 — None을 명시로 넣어도 거부."""
+        body = {"id": "usr_1", "name": "n", "username": "u",
+                "email": "a@b.com", "email_verified": True}
+        body[field] = None
+        with pytest.raises(ValidationError):
+            UserOut(**body)
+
 
 class TestProfileUpdate:
     def test_valid_parses(self):
@@ -66,6 +87,22 @@ class TestProfileUpdate:
         with pytest.raises(ValidationError):
             ProfileUpdateRequest()
 
+    def test_name_none_rejected(self):
+        """빠뜨림(required)과 별개로, name=None 명시도 거부(닉네임은 non-null)."""
+        with pytest.raises(ValidationError):
+            ProfileUpdateRequest(name=None)
+
+    @pytest.mark.parametrize("value", [123, True, ["x"], {"a": 1}])
+    def test_non_string_name_rejected(self, value):
+        """str이 아닌 값은 거부 — strip_name이 비-str은 통과시키고 pydantic이 막는다.
+        (숫자 닉네임을 조용히 '123'으로 강제하지 않음 = 뒷탈 방지)."""
+        with pytest.raises(ValidationError):
+            ProfileUpdateRequest(name=value)
+
+    def test_internal_whitespace_preserved(self):
+        """앞뒤만 strip — 이름 사이 공백은 보존."""
+        assert ProfileUpdateRequest(name="  박 준 서  ").name == "박 준 서"
+
     def test_unknown_field_rejected(self):
         """오타 필드(nmae)를 조용히 무시하지 않고 422 (extra=forbid)."""
         with pytest.raises(ValidationError):
@@ -85,9 +122,17 @@ class TestPasswordChange:
     def test_new_password_boundary_8_ok(self):
         assert PasswordChangeRequest(current_password="o", new_password="12345678").new_password == "12345678"
 
+    def test_new_password_boundary_128_ok(self):
+        assert len(PasswordChangeRequest(current_password="o", new_password="a" * 128).new_password) == 128
+
     def test_new_password_max_length(self):
         with pytest.raises(ValidationError):
             PasswordChangeRequest(current_password="old", new_password="a" * 129)
+
+    def test_current_password_whitespace_only_ok(self):
+        """current_password는 스트립/형식검사 안 함 — 공백만이어도 길이만 맞으면 통과
+        (실제 일치 여부는 라우터가 verify_password로 판정, 작업 5)."""
+        assert PasswordChangeRequest(current_password="   ", new_password="new-pass-1").current_password == "   "
 
     def test_whitespace_preserved_in_passwords(self):
         """비밀번호는 공백도 유효 문자 — 절대 스트립하지 않는다."""
