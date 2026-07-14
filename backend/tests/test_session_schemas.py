@@ -10,9 +10,9 @@ from pydantic import ValidationError
 
 from app.db.enums import QuestionerPersona, SessionMode, SessionStatus
 from app.schemas.session import (
-    SessionCard,
     SessionCreateRequest,
     SessionDetail,
+    SessionListOut,
     SessionUpdateRequest,
 )
 
@@ -164,8 +164,14 @@ class TestResponseShapes:
         )
         assert d.material is None and d.recording is None and d.transcript is None
 
-    def test_card_shape(self):
-        c = SessionCard(id="ses_1", name="발표", status="draft", mode="upload",
-                        persona_count=3, question_count=5, time_limit_minutes=10,
-                        created_at="2026-07-08T02:10:00Z")
-        assert c.persona_count == 3
+    def test_list_envelope_items_are_detail_shaped(self):
+        """목록 항목 = 상세와 동일 형태 (FE Session.fromJson 계약, api-spec §1.2 봉투)."""
+        d = SessionDetail(
+            id="ses_1", team_id="team_1", owner_id="usr_1", name="발표",
+            status="draft", personas=["egen"], question_count=5,
+            time_limit_minutes=10, mode="upload",
+            created_at="2026-07-08T02:10:00Z",
+        )
+        out = SessionListOut(items=[d]).model_dump()
+        assert out["items"][0]["team_id"] == "team_1"
+        assert out["items"][0]["personas"] == ["egen"]

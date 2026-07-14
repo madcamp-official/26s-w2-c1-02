@@ -32,6 +32,7 @@ from app.db.enums import (
     SessionStatus,
 )
 from app.db.session import SessionLocal
+from app.services import report_jobs
 from app.services.llm.base import MAX_FOLLOW_UP_DEPTH
 from app.services.llm.factory import get_llm_provider
 from app.services.session_state import advance_status
@@ -169,6 +170,12 @@ def run_answer_stt(question_id: str) -> None:
 
         _decide_follow_up_and_advance(db, question, answer)
 
+        # 마지막 답변으로 자동 종료됐으면(A7) 리포트를 인라인 생성 — 꼬리질문 TTS와
+        # 같은 규칙(워커 스레드라 BackgroundTasks를 못 씀). run_report는 자기 세션을 연다.
+        session = db.get(models.RehearsalSession, question.session_id)
+        if session is not None and session.status == SessionStatus.completed:
+            report_jobs.run_report(session.id)
+
 
 def _fail_answer(db, answer: models.Answer, code: str, message: str) -> None:
     """답변 STT 실패 — failed + follow_up 없음. current는 그대로(같은 질문 재제출)."""
@@ -283,8 +290,9 @@ def record_pass(db, session: models.RehearsalSession, question: models.Question,
 def end_session(db, session: models.RehearsalSession, reason: EndedReason) -> None:
     """세션을 completed로 전이하고 종료 사유를 기록한 뒤 리포트를 큐에 올린다 (A7).
 
-    커밋은 호출자 몫. 리포트 **생성 로직 실체는 Step 4** — 여기선 reports 행을 queued로
-    만들어 트리거 지점만 마련한다."""
+    커밋은 호출자 몫. 여기선 reports 행을 queued로만 만든다 — 실제 생성
+    (report_jobs.run_report)은 호출자가 **커밋 후** 트리거한다(qna/end·pass 라우트는
+    BackgroundTasks, 답변 STT 자동 종료는 워커에서 인라인)."""
     if session.status == SessionStatus.qna:
         advance_status(session, SessionStatus.completed)
     session.qna_ended_reason = reason

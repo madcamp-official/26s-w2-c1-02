@@ -7,18 +7,20 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.routes import (
-    auth, files, invites, materials, qna, recordings, sessions, speeches, teams, users,
+    auth, files, invites, materials, qna, recordings, reports, sessions, speeches, teams, users,
 )
 from app.core.config import settings
 from app.core.errors import ApiError, api_error_handler, validation_error_handler
 from app.db.session import get_db
-from app.services import stt_queue
+from app.services import report_jobs, stt_queue
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 서버 재시작으로 큐(인메모리)가 비었을 때, 미완료 STT 잡을 다시 큐에 넣는다.
     stt_queue.recover()
+    # 같은 이유로 queued/processing에 멈춘 리포트 잡도 재실행한다 (A7).
+    report_jobs.recover()
     yield
 
 
@@ -50,7 +52,8 @@ app.include_router(sessions.router, prefix=API_V1)       # /teams/{id}/sessions,
 app.include_router(materials.router, prefix=API_V1)      # /sessions/{id}/material
 app.include_router(recordings.router, prefix=API_V1)     # /sessions/{id}/recording
 app.include_router(qna.router, prefix=API_V1)            # /sessions/{id}/qna/generate
-app.include_router(users.router, prefix=API_V1)          # /users/me*
+app.include_router(reports.router, prefix=API_V1)        # /sessions/{id}/report, /users/me/report/growth
+app.include_router(users.router, prefix=API_V1)           # /users/me*
 
 
 @app.get("/health", tags=["meta"])

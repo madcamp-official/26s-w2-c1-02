@@ -24,6 +24,7 @@ from app.schemas.team import (
     TeamCard,
     TeamCreateRequest,
     TeamDetail,
+    TeamListOut,
     TeamMemberInfo,
     TeamUpdateRequest,
 )
@@ -44,20 +45,20 @@ _LIST_TEAMS_SQL = text("""
 """)
 
 
-@router.get("", response_model=list[TeamCard])
+@router.get("", response_model=TeamListOut)
 def list_teams(
     user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> list[TeamCard]:
+) -> TeamListOut:
     rows = db.execute(_LIST_TEAMS_SQL, {"uid": user.id}).mappings().all()
-    return [
+    return TeamListOut(items=[
         TeamCard(
             id=r["id"], name=r["name"],
             session_count=r["session_count"],
             members_preview=r["members_preview"] or "",
         )
         for r in rows
-    ]
+    ])
 
 
 @router.post("", response_model=TeamDetail, status_code=201)
