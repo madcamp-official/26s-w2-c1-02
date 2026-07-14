@@ -40,16 +40,17 @@ class _SignupPageState extends State<SignupPage> {
     }
     setState(() => _submitting = true);
     try {
+      final email = _email.text.trim();
       await context.read<AuthController>().signup(
             name: _name.text.trim(),
             username: _username.text.trim(),
             password: _password.text,
-            email: _email.text.trim(),
+            email: email,
           );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('가입 완료! 로그인해주세요 (이메일 인증은 추후)')));
-      context.go('/login');
+      // 가입(201)이 인증코드를 발송하므로 곧바로 코드 입력 화면으로 (§8-1).
+      // send=1 없이 진입 — 방금 발송된 코드를 그대로 쓴다.
+      context.go('/verify-email?email=${Uri.encodeQueryComponent(email)}');
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -69,23 +70,9 @@ class _SignupPageState extends State<SignupPage> {
               _field(_password, '비밀번호',
                   obscure: true, helper: '8자 이상 입력해주세요'),
               _field(_passwordConfirm, '비밀번호 확인', obscure: true),
-              Row(
-                children: [
-                  Expanded(child: _field(_email, '이메일', bottom: 0)),
-                  const SizedBox(width: 8),
-                  TextButton(
-                    style: TextButton.styleFrom(
-                      backgroundColor: AppColors.surface,
-                      foregroundColor: AppColors.textPrimary,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 18),
-                    ),
-                    onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('이메일 발송은 추후 연동 (mock)'))),
-                    child: const Text('인증요청'),
-                  ),
-                ],
-              ),
+              // "인증요청" 버튼 없음 — 가입 자체가 인증코드를 발송한다 (§8-1).
+              _field(_email, '이메일',
+                  bottom: 0, helper: '가입하면 이 주소로 인증코드가 발송돼요'),
               const SizedBox(height: 24),
               SizedBox(
                 height: 56,
