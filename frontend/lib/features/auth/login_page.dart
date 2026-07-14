@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/network/api_client.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/models/enums.dart';
 import '../../state/auth_controller.dart';
@@ -29,10 +30,27 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _login() async {
     final auth = context.read<AuthController>();
-    await auth.login(
-      username: _usernameController.text.trim(),
-      password: _pwController.text,
-    );
+    try {
+      await auth.login(
+        username: _usernameController.text.trim(),
+        password: _pwController.text,
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      // §8-4: 403 = 비밀번호는 맞는데 이메일 미인증 — 코드 입력 화면으로.
+      // 로그인은 username 기반이라 이메일은 인증 화면 1단계에서 입력받는다.
+      if (e.statusCode == 403 && e.code == 'EMAIL_NOT_VERIFIED') {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('이메일 인증이 필요해요')));
+        context.go('/verify-email');
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.statusCode == 401
+              ? '아이디 또는 비밀번호가 올바르지 않아요'
+              : (e.message ?? '로그인에 실패했어요. 잠시 후 다시 시도해주세요'))));
+      return;
+    }
     if (mounted && auth.isLoggedIn) context.go('/');
   }
 

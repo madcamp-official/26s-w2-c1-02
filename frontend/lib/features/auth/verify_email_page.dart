@@ -14,14 +14,17 @@ import '../common/responsive_page.dart';
 
 /// 이메일 인증코드 입력 (email-verification-plan §8-2·§8-3).
 ///
-/// 진입 경로 2개 — 둘 다 [email]을 받는다:
-/// ① 가입 201 직후 자동 진입 (가입이 코드를 발송하므로 [sendOnEntry]=false)
-/// ② 로그인 403(EMAIL_NOT_VERIFIED) 리다이렉트 — 가입 때 코드는 10분 만료라
-///    [sendOnEntry]=true로 진입 즉시 새 코드를 발송한다 (§8-4)
+/// 진입 경로 2개:
+/// ① 가입 201 직후 자동 진입 — [email]을 받고, 가입이 코드를 발송했으므로
+///    [sendOnEntry]=false
+/// ② 로그인 403(EMAIL_NOT_VERIFIED) 리다이렉트 (§8-4) — 로그인은 username
+///    기반이고 403 응답에 email이 없어서 [email]이 빈 값으로 진입한다.
+///    이때는 이메일 입력 단계를 먼저 보여주고, 확정 시 새 코드를 발송한다
+///    (가입 때 코드는 10분 만료라 어차피 재발송이 필요).
 class VerifyEmailPage extends StatefulWidget {
   const VerifyEmailPage({
     super.key,
-    required this.email,
+    this.email = '',
     this.sendOnEntry = false,
   });
 
@@ -37,6 +40,8 @@ class _VerifyEmailPageState extends State<VerifyEmailPage>
   static const _resendCooldown = 60; // §8-2: 재발송 60초 쿨다운
 
   final _code = TextEditingController();
+  final _emailInput = TextEditingController();
+  String? _email; // null이면 아직 이메일 입력 단계 (로그인 403 경로)
   bool _submitting = false;
   bool _highlightResend = false; // CODE_EXPIRED 시 재발송 버튼 강조 (§8-3)
 
@@ -50,22 +55,37 @@ class _VerifyEmailPageState extends State<VerifyEmailPage>
   @override
   void initState() {
     super.initState();
-    if (widget.sendOnEntry) _resend(); // 로그인 403 경로 — 새 코드 자동 발송
+    if (widget.email.isNotEmpty) {
+      _email = widget.email;
+      if (widget.sendOnEntry) _resend(); // 새 코드 자동 발송 (§8-4)
+    }
   }
 
   @override
   void dispose() {
     _code.dispose();
+    _emailInput.dispose();
     _cooldownTimer?.cancel();
     _shake.dispose();
     super.dispose();
+  }
+
+  /// 로그인 403 경로 — 이메일 확정 후 곧바로 새 코드 발송 (§8-4).
+  Future<void> _confirmEmail() async {
+    final email = _emailInput.text.trim();
+    if (email.isEmpty || !email.contains('@')) {
+      _snack('이메일 주소를 확인해주세요');
+      return;
+    }
+    setState(() => _email = email);
+    await _resend();
   }
 
   Future<void> _submit() async {
     if (_submitting || _code.text.length != 6) return;
     setState(() => _submitting = true);
     try {
-      await context.read<AuthController>().verifyEmail(widget.email, _code.text);
+      await context.read<AuthController>().verifyEmail(_email!, _code.text);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('인증 완료! 로그인해주세요')));
@@ -93,7 +113,7 @@ class _VerifyEmailPageState extends State<VerifyEmailPage>
     try {
       await context
           .read<AuthController>()
-          .requestEmailVerification(widget.email);
+          .requestEmailVerification(_email!);
       if (!mounted) return;
       _snack('인증코드를 다시 보냈어요. 메일함(스팸함 포함)을 확인해주세요');
       setState(() => _highlightResend = false);
@@ -133,10 +153,55 @@ class _VerifyEmailPageState extends State<VerifyEmailPage>
       ),
       body: SafeArea(
         child: ResponsivePage(
-          child: ListView(
+          child: _email == null ? _emailEntry() : _codeEntry(cooling),
+        ),
+      ),
+    );
+  }
+
+  /// 로그인 403 경로 1단계 — 가입한 이메일을 받아 새 코드를 발송한다.
+  Widget _emailEntry() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      children: [
+        const Text('이메일 인증이 필요해요',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                fontSize: 18, fontWeight: FontWeight.w700, height: 1.4)),
+        const SizedBox(height: 8),
+        const Text('가입할 때 쓴 이메일로 인증코드를 보내드려요',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+        const SizedBox(height: 32),
+        TextField(
+          controller: _emailInput,
+          autofocus: true,
+          keyboardType: TextInputType.emailAddress,
+          decoration: const InputDecoration(hintText: '이메일'),
+          onSubmitted: (_) => _confirmEmail(),
+        ),
+        const SizedBox(height: 24),
+        SizedBox(
+          height: 56,
+          child: FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+            onPressed: _confirmEmail,
+            child: const Text('인증코드 받기'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _codeEntry(bool cooling) {
+    return ListView(
             padding: const EdgeInsets.symmetric(vertical: 24),
             children: [
-              Text('${widget.email}로\n인증코드를 보냈어요',
+              Text('$_email로\n인증코드를 보냈어요',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                       fontSize: 18, fontWeight: FontWeight.w700, height: 1.4)),
@@ -202,9 +267,6 @@ class _VerifyEmailPageState extends State<VerifyEmailPage>
                     : '코드가 안 왔나요? 재발송'),
               ),
             ],
-          ),
-        ),
-      ),
     );
   }
 }
