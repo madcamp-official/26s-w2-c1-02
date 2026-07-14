@@ -200,7 +200,7 @@ def _decide_follow_up_and_advance(db, question: models.Question, answer: models.
             provider = get_llm_provider()
             draft = asyncio.run(provider.follow_up(
                 question=question.text, answer=answer.text or "",
-                depth=question.follow_up_depth,
+                depth=question.follow_up_depth, persona=question.persona,
             ))
         except Exception:
             logger.exception("꼬리질문 생성 실패: %s", question.id)

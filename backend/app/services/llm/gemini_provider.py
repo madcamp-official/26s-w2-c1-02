@@ -175,12 +175,15 @@ class GeminiLLMProvider(LLMProvider):
         question: str,
         answer: str,
         depth: int,
+        persona: QuestionerPersona,
     ) -> QuestionDraft | None:
         if depth >= MAX_FOLLOW_UP_DEPTH:  # A11: 1차 질문(0)에만 꼬리질문 1개
             return None
         # 판단 규칙(STT 견딤·needed 분기)은 _SYSTEM_INSTRUCTION에 있고, 여기엔 이번 건만 담는다.
+        # 페르소나 말투 설명은 _SYSTEM_INSTRUCTION(캐시)에 이미 있으니 이름만 넘긴다.
         prompt = (
             "[작업] 꼬리질문 판단\n"
+            f"[페르소나 — 이 말투를 반영] {persona.value}\n"
             f"[원 질문] {question}\n"
             f"[발표자 답변] {answer}\n\n"
             "needed=true면 파고들 한국어 꼬리질문 1개(text)와 그에 맞는 strategy를 채우고, "
@@ -191,8 +194,7 @@ class GeminiLLMProvider(LLMProvider):
             return None
         return QuestionDraft(
             text=out.text.strip(),
-            # 부모 persona는 라우터가 승계. 여기선 기본값을 두고 라우터가 덮어쓴다.
-            persona=QuestionerPersona.egen,
+            persona=persona,  # 부모 페르소나 승계
             strategy=out.strategy or QuestionStrategy.detail_probe,
             follow_up_depth=depth + 1,
         )
