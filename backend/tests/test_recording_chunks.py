@@ -72,6 +72,7 @@ def ctx():
         storage.delete(storage.recording_key(sid, ext))
 
 
+START = "/api/v1/sessions/{}/recording/start"
 CHUNKS = "/api/v1/sessions/{}/recording/chunks"
 COMPLETE = "/api/v1/sessions/{}/recording/complete"
 
@@ -108,6 +109,36 @@ def _chunk_rows(sid):
             select(RecordingChunk).where(RecordingChunk.session_id == sid)
             .order_by(RecordingChunk.seq)
         ).all()
+
+
+class TestStart:
+    def test_start_transitions_draft(self, ctx):
+        sid, _ = ctx
+        r = client.post(START.format(sid), headers=_auth("rchk_owner"))
+        assert r.status_code == 202
+        assert r.json() == {"status": "recording_in_progress"}
+        assert _get(sid, RehearsalSession).status == "recording_in_progress"
+
+    def test_start_is_idempotent(self, ctx):
+        sid, _ = ctx
+        client.post(START.format(sid), headers=_auth("rchk_owner"))
+        r = client.post(START.format(sid), headers=_auth("rchk_owner"))  # 두 번째도 OK
+        assert r.status_code == 202
+        assert _get(sid, RehearsalSession).status == "recording_in_progress"
+
+    def test_start_rejected_after_transcribing(self, ctx):
+        sid, _ = ctx
+        _complete(sid, total=0)  # → transcribing
+        r = client.post(START.format(sid), headers=_auth("rchk_owner"))
+        assert r.status_code == 409
+
+    def test_start_member_not_owner_403(self, ctx):
+        sid, _ = ctx
+        assert client.post(START.format(sid), headers=_auth("rchk_member")).status_code == 403
+
+    def test_start_requires_auth(self, ctx):
+        sid, _ = ctx
+        assert client.post(START.format(sid)).status_code == 401
 
 
 class TestChunkUpload:

@@ -285,7 +285,7 @@ Set-Cookie: refresh_token=eyJhbGci...; HttpOnly; Secure; SameSite=Strict; Path=/
 ```
 stateDiagram-v2
     [*] --> draft: POST /sessions
-    draft --> recording_in_progress: recording/start (실시간)
+    draft --> recording_in_progress: recording/start 또는 첫 청크 (실시간)
     draft --> transcribing: recording 업로드 (파일모드)
     recording_in_progress --> transcribing: recording 업로드(발표 마치기)
     transcribing --> generating_questions: STT 완료 → qna/generate
@@ -370,10 +370,10 @@ stateDiagram-v2
 
 | Method | Path                                     | 설명                                                                        |
 | ------ | ---------------------------------------- | ------------------------------------------------------------------------- |
-| POST   | `/sessions/{sessionId}/recording/start`  | (실시간·선택) 녹음 시작 표시 → `status=recording_in_progress`, `started_at`. 이어하기용   |
+| POST   | `/sessions/{sessionId}/recording/start`  | (실시간·선택, **구현됨**) 녹음 시작 표시 → `draft`를 `recording_in_progress`로 전이(**멱등**). `started_at`은 `/recording`·`/complete`에서 확정. 이어하기용 — 미호출 시 첫 청크가 전이를 대체 |
 | POST   | `/sessions/{sessionId}/recording`        | 녹음 파일 업로드(multipart) → **STT 시작**(`202`). **데모 기본·유일 경로** — 실시간/파일 모드가 여기로 수렴(§0.8) |
-| POST   | `/sessions/{sessionId}/recording/chunks` | **(후순위·미구현)** 실시간 녹음 청크 업로드(60초+4초 겹침) → 청크별 STT 잡 큐 적재(`202`). §4.3.1 draft |
-| POST   | `/sessions/{sessionId}/recording/complete` | **(후순위·미구현)** 실시간 녹음 종료: 재생용 전체 파일 업로드 + 병합 트리거 → `transcribing`(`202`). §4.3.1 draft |
+| POST   | `/sessions/{sessionId}/recording/chunks` | (**구현됨**) 실시간 녹음 청크 업로드(60초+4초 겹침) → `(session_id, seq)` 멱등 upsert + 청크별 STT 잡 큐(`202 {received_seq}`). §4.3.1. 데모 FE는 §0.8로 일괄 수렴(서버는 구현 완료) |
+| POST   | `/sessions/{sessionId}/recording/complete` | (**구현됨**) 실시간 녹음 종료: 재생용 전체 파일 업로드 + 병합(누락/실패 시 전체 파일 폴백) → `transcribing`(`202`). §4.3.1 |
 | GET    | `/sessions/{sessionId}/transcript`       | STT 상태 + 세그먼트                                                             |
 | POST   | `/sessions/{sessionId}/transcript/retry` | STT 재시도                                                                   |
 

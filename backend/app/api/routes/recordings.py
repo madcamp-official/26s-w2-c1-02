@@ -110,6 +110,26 @@ def _store_full_recording(
     return old_key if (old_key and old_key != key) else None
 
 
+@router.post("/sessions/{session_id}/recording/start", status_code=202)
+def start_recording(
+    session: models.RehearsalSession = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """실시간 녹음 시작 표시(api-spec §4.3, 선택) → draft를 recording_in_progress로 전이.
+
+    이어하기(resume) 감지용. **멱등** — 이미 recording_in_progress면 전이 없이 202.
+    started_at은 스키마상 오디오 파일과 함께 오므로 여기서 저장하지 않고
+    `/recording/complete`(또는 `/recording`)에서 확정한다. 첫 청크(`/recording/chunks`)도
+    같은 전이를 수행하므로 이 호출은 선택이다(미호출 시 첫 청크가 대체)."""
+    if session.status == SessionStatus.recording_in_progress:
+        return {"status": SessionStatus.recording_in_progress.value}  # 멱등 no-op
+    if session.status != SessionStatus.draft:
+        raise ApiError(409, "RECORDING_NOT_ALLOWED", "지금은 녹음을 시작할 수 없어요.")
+    advance_status(session, SessionStatus.recording_in_progress)
+    db.commit()
+    return {"status": SessionStatus.recording_in_progress.value}
+
+
 @router.post("/sessions/{session_id}/recording", status_code=202)
 def upload_recording(
     file: UploadFile = File(...),
