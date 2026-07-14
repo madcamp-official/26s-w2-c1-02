@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_session_member, require_session_owner
@@ -41,6 +42,8 @@ _EXT_BY_NAME = {".mp3": "mp3", ".wav": "wav", ".m4a": "m4a", ".mp4": "m4a"}
 # 녹음 업로드를 받아들이는 세션 상태 (질의응답 단계 이후엔 거부)
 _UPLOADABLE = {SessionStatus.draft, SessionStatus.recording_in_progress,
                SessionStatus.transcribing, SessionStatus.failed}
+# 실시간 녹음 청크를 받아들이는 세션 상태 (첫 청크가 draft를 recording_in_progress로 전이)
+_CHUNK_ALLOWED = {SessionStatus.draft, SessionStatus.recording_in_progress}
 
 
 def _audio_ext(file: UploadFile) -> str | None:
@@ -118,6 +121,73 @@ def upload_recording(
         storage.delete(old_key)
     stt_queue.enqueue(session.id)  # STT 직렬 큐 (워커가 한 번에 하나씩 처리)
     return {"status": AsyncStatus.queued.value}
+
+
+@router.post("/sessions/{session_id}/recording/chunks", status_code=202)
+def upload_recording_chunk(
+    file: UploadFile = File(...),
+    seq: int = Form(...),
+    offset_seconds: float = Form(...),
+    overlap_seconds: float = Form(0.0),
+    duration_seconds: float = Form(...),
+    session: models.RehearsalSession = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+) -> dict:
+    """실시간 녹음 청크 업로드(api-spec §4.3.1) → 청크 STT 잡 큐 → 202 {received_seq}.
+
+    같은 seq 재전송은 멱등하게 덮어쓴다(①). 청크 STT 결과는 recording_chunks에
+    청크-로컬 타임스탬프로 쌓이고, /recording/complete에서 병합된다(④).
+    청크가 전부 유실돼도 complete의 전체 파일이 안전망이다(②)."""
+    ext = _audio_ext(file)
+    if ext is None:
+        raise ApiError(415, "UNSUPPORTED_MEDIA", "wav · mp3 · m4a 청크만 업로드할 수 있어요.")
+    if seq < 0:
+        raise ApiError(400, "VALIDATION", "seq는 0 이상이어야 해요.")
+    if offset_seconds < 0 or overlap_seconds < 0 or duration_seconds <= 0:
+        raise ApiError(400, "VALIDATION", "청크 시간 메타데이터가 올바르지 않아요.")
+
+    data = file.file.read()
+    if len(data) == 0:
+        raise ApiError(400, "EMPTY_FILE", "빈 청크예요.")
+    if len(data) > _MAX_BYTES:
+        raise ApiError(413, "FILE_TOO_LARGE", "청크가 너무 커요.")
+
+    if session.status not in _CHUNK_ALLOWED:
+        raise ApiError(409, "RECORDING_NOT_ALLOWED", "지금은 녹음 청크를 받을 수 없어요.")
+
+    key = storage.recording_chunk_key(session.id, seq, ext)
+    storage.save(key, data)  # 같은 seq 재전송 → 같은 키 덮어쓰기
+
+    # 첫 청크가 draft를 recording_in_progress로 전이 (recording/start 미호출 대비)
+    if session.status == SessionStatus.draft:
+        advance_status(session, SessionStatus.recording_in_progress)
+
+    # 멱등 upsert(①): 같은 (session_id, seq) 재전송은 덮어쓰고 status를 queued로 되돌려 재큐잉
+    vals = dict(
+        session_id=session.id, seq=seq,
+        offset_seconds=offset_seconds, overlap_seconds=overlap_seconds,
+        duration_seconds=duration_seconds, storage_key=key,
+        status=AsyncStatus.queued, segments=None, error_code=None, error_message=None,
+    )
+    reset = {k: v for k, v in vals.items() if k not in ("session_id", "seq")}
+    db.execute(
+        pg_insert(models.RecordingChunk).values(**vals)
+        .on_conflict_do_update(index_elements=["session_id", "seq"], set_=reset)
+    )
+
+    # 청크 수신 중 transcript는 processing (세션은 recording_in_progress 유지)
+    transcript = db.get(models.Transcript, session.id)
+    if transcript is None:
+        transcript = models.Transcript(session_id=session.id, status=AsyncStatus.processing)
+        db.add(transcript)
+    else:
+        transcript.status = AsyncStatus.processing
+        transcript.error_code = None
+        transcript.error_message = None
+
+    db.commit()
+    stt_queue.enqueue_chunk(session.id, seq)  # 직렬 워커 공유
+    return {"received_seq": seq}
 
 
 @router.get("/sessions/{session_id}/transcript", response_model=TranscriptDetail)
