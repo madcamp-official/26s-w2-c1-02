@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rehearsal.io 진척 리포트 — origin/main 기준</title>
+<style>
+:root{
+  --bg:#F7F8FA; --panel:#FFFFFF; --ink:#1C2430; --muted:#5B6674; --line:#DDE2E9;
+  --accent:#3554C9; --accent-soft:#E8EDFB;
+  --done:#1E7F4F; --done-bg:#E3F2EA; --part:#9A6B08; --part-bg:#FAF0DB; --todo:#B3423A; --todo-bg:#F9E7E5;
+  --code-bg:#EEF1F5;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#14181F; --panel:#1C222C; --ink:#E6EAF0; --muted:#9AA4B2; --line:#323B48;
+  --accent:#8FA6F0; --accent-soft:#26304A;
+  --done:#5BC48D; --done-bg:#1D3328; --part:#E0B45C; --part-bg:#38301B; --todo:#E58B82; --todo-bg:#3B2523;
+  --code-bg:#252C38;
+}}
+:root[data-theme="dark"]{
+  --bg:#14181F; --panel:#1C222C; --ink:#E6EAF0; --muted:#9AA4B2; --line:#323B48;
+  --accent:#8FA6F0; --accent-soft:#26304A;
+  --done:#5BC48D; --done-bg:#1D3328; --part:#E0B45C; --part-bg:#38301B; --todo:#E58B82; --todo-bg:#3B2523;
+  --code-bg:#252C38;
+}
+:root[data-theme="light"]{
+  --bg:#F7F8FA; --panel:#FFFFFF; --ink:#1C2430; --muted:#5B6674; --line:#DDE2E9;
+  --accent:#3554C9; --accent-soft:#E8EDFB;
+  --done:#1E7F4F; --done-bg:#E3F2EA; --part:#9A6B08; --part-bg:#FAF0DB; --todo:#B3423A; --todo-bg:#F9E7E5;
+  --code-bg:#EEF1F5;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo",Pretendard,"Malgun Gothic","Segoe UI",sans-serif;
+  font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}
+main{max-width:1020px;margin:0 auto;padding:40px 24px 80px}
+h1{font-size:26px;line-height:1.3;margin:0 0 4px;letter-spacing:-.01em;text-wrap:balance}
+h2{font-size:19px;margin:0 0 4px;letter-spacing:-.01em}
+h3{font-size:15.5px;margin:0 0 8px}
+p{margin:0 0 12px}
+.sub{color:var(--muted);font-size:13.5px;margin-bottom:28px}
+.sub code{font-size:12.5px}
+code,.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:13px;
+  background:var(--code-bg);border-radius:4px;padding:1px 5px}
+.eyebrow{font-size:11.5px;font-weight:700;letter-spacing:.09em;color:var(--accent);text-transform:uppercase;margin-bottom:6px}
+section{margin-top:44px}
+.secdesc{color:var(--muted);font-size:13.5px;margin-bottom:16px;max-width:72ch}
+
+.glance{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:20px}
+.axis{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.axis .lbl{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.03em}
+.axis .val{font-size:24px;font-weight:750;letter-spacing:-.02em;font-variant-numeric:tabular-nums;margin:2px 0 8px}
+.bar{height:5px;border-radius:3px;background:var(--line);overflow:hidden}
+.bar i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+.axis .note{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.45}
+
+.verdict{margin-top:16px;background:var(--accent-soft);border-left:3px solid var(--accent);
+  border-radius:0 8px 8px 0;padding:12px 16px;font-size:14px;max-width:78ch}
+
+.tablewrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+  text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:9px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.dim{color:var(--muted)}
+.small{font-size:12.5px}
+
+.chip{display:inline-block;font-size:11.5px;font-weight:700;border-radius:20px;padding:1.5px 9px;white-space:nowrap}
+.chip.done{color:var(--done);background:var(--done-bg)}
+.chip.part{color:var(--part);background:var(--part-bg)}
+.chip.todo{color:var(--todo);background:var(--todo-bg)}
+.warn{color:var(--todo);font-weight:600}
+
+.branch{margin-top:22px}
+.branch h3{display:flex;align-items:baseline;gap:10px}
+.branch h3 .path{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12.5px;color:var(--muted);font-weight:400}
+.flow{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 18px;margin-top:10px}
+.flow .t{font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--accent);text-transform:uppercase;margin-bottom:6px}
+.flow ol{margin:0;padding-left:20px;font-size:13.5px}
+.flow li{margin-bottom:5px}
+.flow li:last-child{margin-bottom:0}
+
+.foot{margin-top:52px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px;max-width:80ch}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+</head>
+<body>
+<main><div class="eyebrow">Rehearsal.io · 진척 리포트</div>
+<h1>origin/main 기준 프로젝트 현황</h1>
+<p class="sub">기준 커밋 <code>ee93fa2</code> (2026-07-14, voice-design 머지 반영 · 커밋 155개) — 문서 체크리스트와 실제 코드를 대조해 보정한 결과. 코드리뷰 참고용.</p>
+
+<div class="glance">
+  <div class="axis"><div class="lbl">부품 (서비스·화면)</div><div class="val">~95%</div>
+    <div class="bar"><i style="width:95%"></i></div>
+    <div class="note">STT·TTS·LLM·리포트 서비스, FE 26화면 모두 존재. 리포트 라우트용 growth 쿼리만 미조립</div></div>
+  <div class="axis"><div class="lbl">API 배선 (스펙 대비)</div><div class="val">41 / 51</div>
+    <div class="bar"><i style="width:80%"></i></div>
+    <div class="note">스펙 53개 중 이메일 인증 2개(스코프 컷) 제외 51개 기준 80%</div></div>
+  <div class="axis"><div class="lbl">통합·검증 (E2E)</div><div class="val">0%</div>
+    <div class="bar"><i style="width:0%"></i></div>
+    <div class="note">mock-off 실서버 왕복 미시도 — 남은 최대 리스크</div></div>
+  <div class="axis"><div class="lbl">제출물</div><div class="val">0%</div>
+    <div class="bar"><i style="width:0%"></i></div>
+    <div class="note">루트 README(과제 제출물)·시연 영상 미착수</div></div>
+</div>
+
+<div class="verdict"><b>종합 판정: 약 70%, "부품 완성 → 조립·검증" 전환점.</b> 기능 코드는 거의 다 있으나 실서버로 이어 붙여 본 적이 0회. workflow.md가 처음부터 경고한 "통합을 마지막으로 미루는 게 최대 리스크" 구간에 정확히 서 있음.</div>
+
+<section>
+<h2>1 · 역할별 체크리스트 이행 현황</h2>
+<p class="secdesc">workflow.md의 Step별 체크박스를 코드와 대조. <span class="warn">문서가 stale한 곳</span>(체크는 안 됐지만 코드는 있음)은 실제 기준으로 표기.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>Step</th><th>팀원1 · Frontend (사용자)</th><th>팀원2 · Backend</th><th>팀원3 · AI Pipeline</th></tr></thead>
+<tbody>
+<tr><td class="num"><b>1</b> 기반<br><span class="dim small">Day 3</span></td>
+  <td><span class="chip done">완료</span> 모델·mock·28화면 골격·인증 인터셉터</td>
+  <td><span class="chip done">완료</span> DDL·ORM·auth·팀/초대·스토리지</td>
+  <td><span class="chip done">완료</span> GPU 서버·STT 실측·voice 설계·Gemini 연결</td></tr>
+<tr><td class="num"><b>2</b> 자료·녹음<br><span class="dim small">Day 4</span></td>
+  <td><span class="chip done">완료</span> 준비·발표중 화면, 파일 검증</td>
+  <td><span class="chip done">완료</span> 세션 CRUD·material·recording 202+STT 큐</td>
+  <td><span class="chip done">완료</span> PDF 파서·STT 클라이언트(청크+병합, CER 0.96%)</td></tr>
+<tr><td class="num"><b>3</b> Q&amp;A 루프<br><span class="dim small">Day 5</span></td>
+  <td><span class="chip part">화면 완성 / 검증 대기</span> qna_page 661줄 구현됨 — 문서 체크박스가 stale. 실서버 검증만 남음</td>
+  <td><span class="chip done">완료 (문서 stale)</span> <code>routes/qna.py</code> 6개 엔드포인트 + 테스트 6종 — 체크박스만 미갱신</td>
+  <td><span class="chip done">완료</span> 질문·꼬리질문 프롬프트, TTS 연동 + <b>셀프 캐스팅 음색 5종 배포</b></td></tr>
+<tr><td class="num"><b>4</b> 리포트·통합<br><span class="dim small">Day 6</span></td>
+  <td><span class="chip part">화면 완성 / E2E 미시도</span> 리포트·성장·마이페이지·3탭 전부 구현. mock-off ⬜ 크로스플랫폼 ⬜</td>
+  <td><span class="chip todo">라우트 미조립</span> report 라우트 3종 ⬜ · users/me 4종 ⬜ · KCLOUD 배포 ⬜ (cascade는 확인 필요)</td>
+  <td><span class="chip done">완료 (문서 stale)</span> <code>services/report.py</code> 정량 + <code>generate_report</code> LLM 채점 + 회귀 픽스처·테스트 3종</td></tr>
+<tr><td class="num"><b>5</b> 안정화·시연<br><span class="dim small">Day 7</span></td>
+  <td colspan="3"><span class="chip todo">전원 미착수</span> &nbsp;에러/재시도 UX · 폴링 UX · 시드/데모 계정 · 시연 리허설 · <b>루트 README(제출물)</b> · 시연 영상</td></tr>
+</tbody></table></div>
+</section>
+
+<section>
+<h2>2 · API 스펙 커버리지 (api-spec v0.3 → 구현 라우트 대조)</h2>
+<p class="secdesc">스펙의 53개 엔드포인트를 <code>@router</code> 데코레이터 기준으로 전수 대조. 라우트가 있어도 응답 필드 일치는 E2E에서 확인해야 함.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>그룹</th><th>구현</th><th>미구현 항목</th><th>영향</th></tr></thead>
+<tbody>
+<tr><td>auth</td><td class="num">6 / 8</td><td class="small"><code>POST /auth/email/verify</code> · <code>verify-request</code></td><td class="small dim">스코프 컷 합의(선택) — 유지해도 무방</td></tr>
+<tr><td><b>users/me</b></td><td class="num warn">0 / 4</td><td class="small"><code>GET·PATCH /users/me</code> · <code>PATCH password</code> · <code>DELETE /users/me</code></td><td class="small"><span class="warn">마이페이지 비번변경·탈퇴가 호출</span> — mock에는 있어 E2E에서 터짐</td></tr>
+<tr><td>teams</td><td class="num">8 / 8</td><td class="small">—</td><td class="small dim"></td></tr>
+<tr><td>invites</td><td class="num">9 / 9</td><td class="small">—</td><td class="small dim">토큰 라우트(preview/accept/decline) 포함</td></tr>
+<tr><td>sessions</td><td class="num">5 / 5</td><td class="small">—</td><td class="small dim"></td></tr>
+<tr><td>material</td><td class="num">4 / 4</td><td class="small">—</td><td class="small dim"></td></tr>
+<tr><td><b>recording</b></td><td class="num warn">1 / 4</td><td class="small"><code>recording/start</code> · <code>chunks</code> · <code>complete</code></td><td class="small"><span class="warn">FE 실시간 모드(presenting_page)가 청크 API 호출</span> — A8 결정(종료 후 일괄 업로드)과 스펙·FE·BE 3자 정합 필요</td></tr>
+<tr><td>transcript</td><td class="num">2 / 2</td><td class="small">—</td><td class="small dim">GET + retry</td></tr>
+<tr><td>qna</td><td class="num">6 / 6</td><td class="small">—</td><td class="small dim">generate·answer·pass·end·GET qna·질문 상세</td></tr>
+<tr><td><b>report</b></td><td class="num warn">0 / 3</td><td class="small"><code>GET /report</code> · <code>POST /report/generate</code> · <code>GET /users/me/report/growth</code></td><td class="small"><span class="warn">서비스·테스트는 준비 완료</span> — HTTP 배선만 없음. FE 리포트 탭이 대기 중</td></tr>
+<tr><td class="dim">(스펙 외)</td><td class="num dim">+2</td><td class="small dim"><code>speeches.py</code> 레거시 2종 · <code>files.py</code> 서명 URL</td><td class="small dim">speeches는 구 Team/Speech 잔재 — 제거 후보</td></tr>
+</tbody></table></div>
+</section>
+
+<section>
+<h2>3 · 코드맵 — 세 줄기의 구조와 핵심 플로우</h2>
+
+<div class="branch">
+<h3>Frontend <span class="path">frontend/lib/</span></h3>
+<div class="tablewrap"><table>
+<thead><tr><th>위치</th><th>역할</th><th>대표 파일 · 함수</th></tr></thead>
+<tbody>
+<tr><td class="mono small">core/config</td><td>실행 환경 스위치</td><td class="small"><code>env.dart</code> — <code>USE_MOCK</code>·<code>API_BASE_URL</code> (mock-off의 전부)</td></tr>
+<tr><td class="mono small">core/network</td><td>통신 계층 (mock↔실서버 교체점)</td><td class="small"><code>api_client.dart</code> — 401→refresh 1회 재시도 인터셉터 · <code>mock_backend.dart</code>(869줄 가짜 서버) · <code>http_backend.dart</code> · <code>token_store.dart</code>(Web 쿠키/Native 분기)</td></tr>
+<tr><td class="mono small">data/repositories</td><td>API 계약 1:1 매핑</td><td class="small"><code>session_repository.dart</code> — <code>generateQna·getQna·submitAnswer·passQuestion·endQna·getReport·getGrowthReport</code></td></tr>
+<tr><td class="mono small">features/common</td><td>공통 위젯</td><td class="small"><code>polling_builder.dart</code> — 1~2초 폴링, <code>ready|failed</code> 종료 (모든 비동기 화면의 심장)</td></tr>
+<tr><td class="mono small">features/session</td><td>핵심 루프 화면</td><td class="small"><code>presenting_page.dart</code>(타이머·로컬 녹음·청크 업로드) · <code>qna_page.dart</code> 661줄(TTS 재생→30s 카운트다운→답변 녹음→202→폴링→꼬리질문 이동) · <code>session_detail_page.dart</code>(스크립트/Q&amp;A/리포트 3탭)</td></tr>
+<tr><td class="mono small">features/report·profile</td><td>Step4 화면</td><td class="small"><code>report_widgets.dart</code>(ReportView) · <code>growth_report_page.dart</code> · <code>my_page.dart</code></td></tr>
+</tbody></table></div>
+<div class="flow"><div class="t">플로우 한 줄</div>
+<ol><li><code>Env.useMockData</code> → <code>app.dart:41</code>에서 <code>MockBackend</code> 또는 <code>RealHttpBackend</code> 주입 — 화면은 어느 쪽인지 모름</li>
+<li>모든 무거운 작업은 202 접수 후 <code>PollingBuilder</code>가 <code>GET</code> 폴링으로 상태 추적 (spec §1.2 비동기 규약)</li></ol></div>
+</div>
+
+<div class="branch">
+<h3>Backend <span class="path">backend/app/</span></h3>
+<div class="tablewrap"><table>
+<thead><tr><th>위치</th><th>역할</th><th>대표 파일 · 함수</th></tr></thead>
+<tbody>
+<tr><td class="mono small">main.py</td><td>라우터 조립(/api/v1)</td><td class="small">auth·teams·invites·sessions·materials·recordings·qna (+legacy speeches, files)</td></tr>
+<tr><td class="mono small">api/deps.py</td><td>권한 가드</td><td class="small"><code>require_team_member</code>·<code>require_team_leader</code>·세션 owner 가드</td></tr>
+<tr><td class="mono small">api/routes/qna.py</td><td>Q&amp;A 루프 배선 (프로젝트의 심장)</td><td class="small">generate(202→질문 생성+TTS 잡)·answer(202→답변 STT→꼬리질문 판정·persona 승계)·pass·end·GET qna(폴링 단일 소스)</td></tr>
+<tr><td class="mono small">services/stt.py + stt_queue.py</td><td>전사 (팀원3 부품 + 직렬 큐)</td><td class="small"><code>transcribe_recording()</code> — 60s+4s 청크 분할→직렬 STT→오프셋 병합. GPU 서버가 직렬이라 큐 필수</td></tr>
+<tr><td class="mono small">services/tts.py</td><td>페르소나 음성 합성</td><td class="small"><code>synthesize_question(text, persona)</code> — persona→voice 1:1, 미등록 400→default 폴백</td></tr>
+<tr><td class="mono small">services/qna_jobs.py</td><td>질문 생성·TTS 백그라운드 잡</td><td class="small">LLM 초안→questions 저장→질문별 TTS 큐</td></tr>
+<tr><td class="mono small">services/llm/</td><td>외부 LLM 추상화</td><td class="small"><code>base.py</code> 계약 3개: <code>generate_questions·follow_up·generate_report</code> + <code>build_type_scores()</code>(전략별 평균은 코드 몫) · gemini/mock 전환은 <code>factory.py</code></td></tr>
+<tr><td class="mono small">services/report.py</td><td>리포트 정량 지표 (순수 함수)</td><td class="small"><code>compute_speaking_metrics()</code> — WPM(필러 제외)·필러 카운트(보수적 사전 <code>FILLER_WORDS</code>)·초과시간</td></tr>
+<tr><td class="mono small">db/ · schemas/</td><td>모델·계약</td><td class="small"><code>models.py</code>(16테이블) · <code>enums.py</code>(persona 5·strategy 4) · <code>schemas/report.py</code>(ReportDraft)</td></tr>
+<tr><td class="mono small">tests/</td><td>회귀 안전망</td><td class="small">qna 6종 · report 3종(+고정 픽스처 <code>report_sample_session.json</code>) · tts · transcript 왕복</td></tr>
+</tbody></table></div>
+<div class="flow"><div class="t">핵심 루프 (한 세션의 일생)</div>
+<ol><li>PDF 업로드 → <code>material.py</code> 파싱 → slides.json</li>
+<li>녹음 업로드 → <code>stt_queue</code> → <code>transcripts.segments</code>(초 float)</li>
+<li><code>POST /qna/generate</code> → <code>qna_jobs</code>: slides+transcript로 LLM 질문 생성 → 질문별 TTS wav 저장</li>
+<li>답변 업로드 → 답변 STT → <code>follow_up()</code> 판정 → 꼬리질문(부모 persona 승계, depth≤1)</li>
+<li><code>qna/end</code> → 리포트 잡: <code>compute_speaking_metrics</code>(숫자) + <code>generate_report</code>(LLM 채점) — <b>여기서 HTTP 라우트만 아직 없음</b></li></ol></div>
+</div>
+
+<div class="branch">
+<h3>AI Pipeline <span class="path">infra/gpu-server/ + docs/ai-pipeline/</span></h3>
+<div class="tablewrap"><table>
+<thead><tr><th>위치</th><th>역할</th><th>대표 파일</th></tr></thead>
+<tbody>
+<tr><td class="mono small">setup_*.sh · start_*.sh</td><td>RTX 3090에 모델 2개 상주</td><td class="small">TTS=VoxCPM2(:8100, ~11.2GB) · STT=Qwen3-ASR+ForcedAligner(:8200, ~10.2GB) — 기동 순서·KV 캐시 튜닝은 README</td></tr>
+<tr><td class="mono small">stt_server.py</td><td>타임스탬프 STT 서버(자작)</td><td class="small"><code>POST /transcribe</code> — 형태소 스탬프→문장급 그룹화(쉼≥0.35s), 1건≤5분·직렬</td></tr>
+<tr><td class="mono small">persona_voices.md</td><td>음성 설계·라우트 이력(단일 진실원)</td><td class="small">캐리커처→MOSS(폐기)→edge-tts(방향 전이 검증, 미채택)→<b>셀프 캐스팅(배포 중)</b></td></tr>
+<tr><td class="mono small">build_persona_refs_*.py</td><td>레퍼런스 생성기 3종</td><td class="small"><code>voxcpm</code>(N샘플 선발+미세보정, 현행) · <code>edge</code> · <code>moss</code>(기록용)</td></tr>
+<tr><td class="mono small">eval_persona_voices.py</td><td>음성 자동 채점 하네스</td><td class="small">duration·F0·발화속도·침묵·STT 왕복 CER·MFCC 거리 — 레퍼런스 교체 시 출력 실측 필수</td></tr>
+<tr><td class="mono small">voices/</td><td>음성 자산</td><td class="small">refs(배포본)=refs_vox 픽 · profiles(safetensors) · out_vox(청취 샘플) · *.bak-caricature(롤백)</td></tr>
+<tr><td class="mono small">docs/ai-pipeline/</td><td>미니 워크플로우 3종</td><td class="small">stt-client · qna-prompt · report-eval — 각 파트의 계약·실측·엣지케이스</td></tr>
+</tbody></table></div>
+</div>
+</section>
+
+<section>
+<h2>4 · 남은 일 — 우선순위순</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>#</th><th>할 일</th><th>담당</th><th>비고</th></tr></thead>
+<tbody>
+<tr><td class="num">1</td><td><b>mock-off E2E</b> — 로컬 BE 기동 + GPU VM 연결, <code>USE_MOCK=false</code>로 핵심 루프 왕복</td><td>팀원1 (사용자)</td><td class="small">최대 리스크 해소. KCLOUD 배포 안 기다려도 됨. 계약 불일치 디버깅이 실체</td></tr>
+<tr><td class="num">2</td><td><b>report 라우트 3종</b> 배선 (GET/generate/growth)</td><td>팀원2</td><td class="small">서비스·테스트 준비 완료 — 반나절 배선. §8.1 성장 SQL도 문서에 있음</td></tr>
+<tr><td class="num">3</td><td><b>users/me 4종</b> (조회·수정·비번·탈퇴)</td><td>팀원2</td><td class="small">마이페이지가 호출 — 없으면 E2E에서 발견됨. 탈퇴=익명화(D4)</td></tr>
+<tr><td class="num">4</td><td><b>recording 청크 3종 정합 결정</b> — 스펙·FE(실시간 모드)·BE(일괄만) 3자 불일치</td><td>전원 (30분 합의)</td><td class="small">A8 결정대로 FE가 일괄 업로드로 수렴하거나, BE가 청크 라우트 추가하거나</td></tr>
+<tr><td class="num">5</td><td>크로스플랫폼 검증 (Web + 모바일 1개 이상)</td><td>팀원1</td><td class="small">E2E 통과 후. Web은 쿠키/CORS 주의</td></tr>
+<tr><td class="num">6</td><td>KCLOUD 백엔드 배포 + GPU 서버 사설망 연결</td><td>팀원2</td><td class="small">허용 포트 표(루트 README) 참고</td></tr>
+<tr><td class="num">7</td><td>Step 5 안정화 — 에러/재시도 UX·폴링 체감·시드 데이터·시연 리허설</td><td>전원</td><td class="small">TTS/질문 생성 대기가 체감 지연 최대 지점</td></tr>
+<tr><td class="num">8</td><td><b>루트 README + 시연 영상</b> (과제 제출물)</td><td>전원</td><td class="small">아키텍처·실행법·명세 — 채점 대상 그 자체</td></tr>
+<tr><td class="num">9</td><td>workflow.md 체크박스 현행화 · <code>speeches.py</code> 레거시 제거</td><td>사용자 · 팀원2</td><td class="small">일괄 정리</td></tr>
+</tbody></table></div>
+</section>
+
+<p class="foot">조사 방법: origin/main <code>ee93fa2</code>에서 스펙 엔드포인트 53개를 추출해 <code>backend/app/api/routes/*</code>의 데코레이터와 전수 대조, workflow.md 체크박스는 해당 파일·함수 존재로 검증. 라우트 존재 ≠ 응답 필드 일치 — 후자는 E2E(남은 일 #1)에서만 확인 가능. 문서 근거: docs/workflow.md · docs/api-spec.md §4~5 · docs/ai-pipeline/report-eval-workflow.md · infra/gpu-server/persona_voices.md.</p>
+</main>
+</body>
+</html>
