@@ -65,6 +65,12 @@ def parse_pdf_to_slides(pdf: bytes | str | Path) -> list[dict]:
             {"page": i + 1, "text": _clean_text(page.get_text("text"))}
             for i, page in enumerate(doc)
         ]
+    except PdfParseError:
+        raise
+    except Exception as e:
+        # fitz.open이 성공해도 특정 페이지의 스트림이 손상돼 있으면 get_text가
+        # raw RuntimeError/FileDataError를 던진다 — 문서화된 계약으로 변환.
+        raise PdfParseError(f"페이지 텍스트 추출 실패: {e}") from e
     finally:
         doc.close()
 
