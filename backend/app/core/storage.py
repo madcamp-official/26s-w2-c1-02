@@ -5,7 +5,7 @@
 (S3 presigned URL의 흉내). 서명이 맞고 안 만료됐을 때만 GET /files/{key}가 파일을 준다.
 
 storage_key 규약 (팀원3 TTS 저장·삭제 cascade가 공유):
-    sessions/{session_id}/material.pdf
+    sessions/{session_id}/material.{pdf|pptx}
     sessions/{session_id}/recording.{ext}
     sessions/{session_id}/tts/{question_id}.{ext}
     sessions/{session_id}/answers/{question_id}.{ext}

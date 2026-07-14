@@ -1,8 +1,8 @@
-"""발표 자료 PDF 업로드 + 백그라운드 파싱 (작업 3-1·3-2, api-spec §4.2).
+"""발표 자료(PDF·PPTX) 업로드 + 백그라운드 파싱 (작업 3-1·3-2, api-spec §4.2).
 
 업로드는 파일을 저장하고 materials 행을 queued로 만든 뒤 **즉시 202**를 반환한다.
-실제 파싱(PyMuPDF)은 BackgroundTasks로 응답 후 실행되고, 결과는 materials.status
-폴링으로 확인한다 (queued → processing → ready|failed).
+실제 파싱(PyMuPDF·python-pptx)은 BackgroundTasks로 응답 후 실행되고, 결과는
+materials.status 폴링으로 확인한다 (queued → processing → ready|failed).
 
 파싱 잡은 요청 bytes가 아니라 storage_key에서 파일을 다시 읽는다 — 그래야 retry(3-3)가
 같은 잡(_run_parse)을 재사용할 수 있다.
@@ -20,7 +20,7 @@ from app.db import models
 from app.db.enums import AsyncStatus
 from app.db.session import SessionLocal, get_db
 from app.schemas.session import ErrorInfo, MaterialDetail
-from app.services.material import UnprocessablePdfError, parse_pdf_to_slides
+from app.services.material import UnprocessableMaterialError, parse_material_to_slides
 
 router = APIRouter(tags=["materials"])
 logger = logging.getLogger("rehearsal.material")
@@ -28,11 +28,19 @@ logger = logging.getLogger("rehearsal.material")
 _MAX_BYTES = 20 * 1024 * 1024  # §1.3: 20MB (materials.file_size_bytes CHECK와 동일)
 
 
-def _run_parse(session_id: str) -> None:
-    """백그라운드 PDF 파싱 잡. 응답 후 실행되므로 자기 DB 세션을 연다.
+# 형식별 에러 코드 (unprocessable, parse_error) — api-spec §9 에러 코드 표와 동일.
+_ERROR_CODES = {
+    "pdf": ("UNPROCESSABLE_PDF", "PDF_PARSE_ERROR"),
+    "pptx": ("UNPROCESSABLE_PPTX", "PPTX_PARSE_ERROR"),
+}
 
-    storage_key에서 파일을 읽어 파싱하고 materials를 갱신. 예외는 status=failed +
-    error_code로 흡수한다(잡은 절대 던지지 않음 — 던지면 조용히 사라진다).
+
+def _run_parse(session_id: str) -> None:
+    """백그라운드 자료 파싱 잡. 응답 후 실행되므로 자기 DB 세션을 연다.
+
+    storage_key에서 파일을 읽어 확장자에 맞는 파서로 파싱하고 materials를 갱신.
+    예외는 status=failed + error_code로 흡수한다(잡은 절대 던지지 않음 — 던지면
+    조용히 사라진다).
     """
     with SessionLocal() as db:
         material = db.get(models.Material, session_id)
@@ -41,17 +49,19 @@ def _run_parse(session_id: str) -> None:
         material.status = AsyncStatus.processing
         db.commit()
 
+        ext = material.storage_key.rsplit(".", 1)[-1].lower()
+        unprocessable_code, parse_error_code = _ERROR_CODES.get(ext, _ERROR_CODES["pdf"])
         try:
-            pdf_bytes = storage.load(material.storage_key)
-            slides = parse_pdf_to_slides(pdf_bytes)
-        except UnprocessablePdfError as e:
-            _fail(db, material, "UNPROCESSABLE_PDF", str(e))
+            data = storage.load(material.storage_key)
+            slides = parse_material_to_slides(data, ext)
+        except UnprocessableMaterialError as e:
+            _fail(db, material, unprocessable_code, str(e))
             return
         except Exception as e:
-            # PdfParseError 외의 예상 못한 예외도 전부 흡수 — 던지면 잡이 조용히
+            # MaterialParseError 외의 예상 못한 예외도 전부 흡수 — 던지면 잡이 조용히
             # 죽고 status가 processing에 영원히 갇힌다(retry는 failed만 받는다).
             logger.exception("자료 파싱 잡 실패: %s", session_id)
-            _fail(db, material, "PDF_PARSE_ERROR", str(e))  # retry 대상
+            _fail(db, material, parse_error_code, str(e))  # retry 대상
             return
 
         material.slides = slides
@@ -70,10 +80,28 @@ def _fail(db: Session, material: models.Material, code: str, message: str) -> No
     db.commit()
 
 
-def _looks_like_pdf(file: UploadFile) -> bool:
-    if file.content_type in ("application/pdf", "application/x-pdf"):
-        return True
-    return bool(file.filename and file.filename.lower().endswith(".pdf"))
+_MIME_EXT = {
+    "application/pdf": "pdf",
+    "application/x-pdf": "pdf",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+}
+
+
+def _material_ext(file: UploadFile) -> str | None:
+    """업로드 파일의 자료 형식("pdf"|"pptx"). 미지원이면 None → 415.
+
+    MIME이 우선, 아니면(octet-stream 등) 확장자로 판별. 레거시 .ppt(바이너리
+    포맷)는 python-pptx가 못 읽어 미지원 — .pptx 재저장을 안내한다.
+    """
+    ext = _MIME_EXT.get(file.content_type or "")
+    if ext:
+        return ext
+    name = (file.filename or "").lower()
+    if name.endswith(".pdf"):
+        return "pdf"
+    if name.endswith(".pptx"):
+        return "pptx"
+    return None
 
 
 @router.post("/sessions/{session_id}/material", status_code=202)
@@ -83,9 +111,11 @@ def upload_material(
     session: models.RehearsalSession = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ) -> dict:
-    """PDF 업로드 → 저장 + queued → 202. 파싱은 백그라운드. 재업로드는 덮어쓰기."""
-    if not _looks_like_pdf(file):
-        raise ApiError(415, "UNSUPPORTED_MEDIA", "PDF 파일만 업로드할 수 있어요.")
+    """자료(PDF·PPTX) 업로드 → 저장 + queued → 202. 파싱은 백그라운드. 재업로드는 덮어쓰기."""
+    ext = _material_ext(file)
+    if ext is None:
+        raise ApiError(415, "UNSUPPORTED_MEDIA",
+                       "PDF·PPTX 파일만 업로드할 수 있어요. (.ppt는 .pptx로 다시 저장해 주세요)")
 
     data = file.file.read()
     if len(data) == 0:
@@ -93,7 +123,7 @@ def upload_material(
     if len(data) > _MAX_BYTES:
         raise ApiError(413, "FILE_TOO_LARGE", "자료는 20MB 이하만 업로드할 수 있어요.")
 
-    key = storage.material_key(session.id)
+    key = storage.material_key(session.id, ext)
     storage.save(key, data)
 
     # 같은 세션 동시 업로드 직렬화 — 세션 행 잠금. 없으면 첫 업로드 시 두 요청이
@@ -101,11 +131,14 @@ def upload_material(
     db.refresh(session, with_for_update=True)
     material = db.get(models.Material, session.id)
     if material is None:
-        material = models.Material(session_id=session.id, file_name=file.filename or "material.pdf",
+        material = models.Material(session_id=session.id, file_name=file.filename or f"material.{ext}",
                                    file_size_bytes=len(data), storage_key=key)
         db.add(material)
     else:  # 재업로드 — 같은 key 덮어쓰기 + 상태 초기화
-        material.file_name = file.filename or "material.pdf"
+        if material.storage_key != key:
+            # 형식이 바뀐 재업로드(pdf↔pptx) — 이전 확장자 파일이 고아로 남지 않게 제거
+            storage.delete(material.storage_key)
+        material.file_name = file.filename or f"material.{ext}"
         material.file_size_bytes = len(data)
         material.storage_key = key
     material.status = AsyncStatus.queued
