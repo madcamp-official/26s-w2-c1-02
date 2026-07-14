@@ -145,29 +145,57 @@ class _QnaLogTab extends StatelessWidget {
   }
 }
 
+/// Q&A 한 쌍 — 채팅 UI: 질문은 왼쪽 말풍선, 답변은 오른쪽 말풍선.
 class _QnaLogItem extends StatelessWidget {
   const _QnaLogItem({required this.question});
   final Question question;
 
+  /// 답변 말풍선의 짙은 회색 (흰 글씨 대비 확보).
+  static const _answerBg = Color(0xFF3A3A3C);
+
   @override
   Widget build(BuildContext context) {
-    final answer = question.answer;
+    // 말풍선 최대폭 — 반대편 여백을 남겨 채팅처럼 보이게.
+    final maxWidth = MediaQuery.of(context).size.width * 0.78;
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxWidth),
+            child: _questionBubble(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerRight,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxWidth),
+            child: _answerBubble(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _questionBubble() {
     final color = strategyColor(question.strategy);
     return Container(
-      // 꼬리질문은 살짝 들여쓰기.
-      margin: EdgeInsets.only(left: question.isFollowUp ? 20 : 0),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
+      padding: const EdgeInsets.all(14),
+      decoration: const BoxDecoration(
         color: AppColors.surfaceAlt,
-        borderRadius: BorderRadius.circular(16),
-        border: question.isFollowUp
-            ? Border(left: BorderSide(color: color, width: 3))
-            : null,
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(4), // 말풍선 꼬리 느낌
+          topRight: Radius.circular(16),
+          bottomLeft: Radius.circular(16),
+          bottomRight: Radius.circular(16),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(question.persona.professorLabel,
                   style: const TextStyle(
@@ -196,17 +224,46 @@ class _QnaLogItem extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Text('Q. ${question.text}',
+          Text(question.text,
               style: const TextStyle(fontSize: 14, height: 1.5)),
           if (!question.evidence.isEmpty) ...[
             const SizedBox(height: 6),
             Text(_evidenceText(question.evidence),
                 style: const TextStyle(fontSize: 11, color: AppColors.accent)),
           ],
-          const SizedBox(height: 10),
-          _AnswerLine(answer: answer),
         ],
       ),
+    );
+  }
+
+  Widget _answerBubble() {
+    final a = question.answer;
+    final (text, muted) = switch (a?.status) {
+      null || AnswerStatus.pending => ('답변하지 않았어요', true),
+      AnswerStatus.failed => ('답변 변환에 실패했어요', true),
+      _ => a!.text == null || a.text!.isEmpty
+          ? ('패스했어요', true)
+          : (a.text!, false),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        // 실답변은 짙은 회색 + 흰 글씨, 미답변·실패·패스는 옅은 회색으로 구분.
+        color: muted ? AppColors.surface : _answerBg,
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(16),
+          topRight: Radius.circular(4), // 오른쪽 말풍선 꼬리
+          bottomLeft: Radius.circular(16),
+          bottomRight: Radius.circular(16),
+        ),
+      ),
+      child: Text(text,
+          style: TextStyle(
+            fontSize: 13.5,
+            height: 1.5,
+            fontStyle: muted ? FontStyle.italic : FontStyle.normal,
+            color: muted ? AppColors.hint : Colors.white,
+          )),
     );
   }
 
@@ -215,40 +272,6 @@ class _QnaLogItem extends StatelessWidget {
     final refs = e.transcriptRefs.map((t) => '발표 $t').join(', ');
     final sep = e.slides.isNotEmpty && e.transcriptRefs.isNotEmpty ? ' · ' : '';
     return '근거: $slides$sep$refs';
-  }
-}
-
-class _AnswerLine extends StatelessWidget {
-  const _AnswerLine({required this.answer});
-  final AnswerInfo? answer;
-
-  @override
-  Widget build(BuildContext context) {
-    final a = answer;
-    final (text, muted) = switch (a?.status) {
-      null || AnswerStatus.pending => ('답변하지 않았어요', true),
-      AnswerStatus.failed => ('답변 변환에 실패했어요', true),
-      _ => a!.text == null || a.text!.isEmpty
-          ? ('패스했어요', true)
-          : ('A. ${a.text}', false),
-    };
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(muted ? Icons.remove_circle_outline : Icons.record_voice_over,
-            size: 16,
-            color: muted ? AppColors.hint : AppColors.textSecondary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(text,
-              style: TextStyle(
-                  fontSize: 13.5,
-                  height: 1.5,
-                  fontStyle: muted ? FontStyle.italic : FontStyle.normal,
-                  color: muted ? AppColors.hint : AppColors.textPrimary)),
-        ),
-      ],
-    );
   }
 }
 
