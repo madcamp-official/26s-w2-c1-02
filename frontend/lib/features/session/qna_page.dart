@@ -33,6 +33,39 @@ class QnaPage extends StatefulWidget {
 }
 
 class _QnaPageState extends State<QnaPage> {
+  /// 생성 실패(session.failed) 시 사용자 몰래 다시 생성해 보는 최대 횟수.
+  /// 이 안에서 성공하면 사용자는 계속 '생성 중'만 본다. 소진하면 수동 재시도 안내.
+  static const int _maxAutoRegen = 3;
+
+  int _autoRegenCount = 0;
+  bool _regenerating = false; // 재생성 접수(generateQna)가 진행 중
+
+  /// status=failed를 만나면 backoff 후 generateQna를 다시 접수한다. 폴링은 멈추지
+  /// 않으므로, 재접수로 세션이 generating_questions로 돌아가면 다음 틱에서 in_progress로
+  /// 잡혀 스피너가 유지된다. 한 번에 하나만(_regenerating 가드) 접수하고, 끝나면 즉시
+  /// 재폴링해 스냅샷을 새 상태로 갱신한다(오래된 failed로 중복 접수되지 않도록).
+  void _scheduleAutoRegen(SessionRepository repo, VoidCallback refetch) {
+    if (_regenerating) return;
+    _regenerating = true;
+    _autoRegenCount++;
+    final attempt = _autoRegenCount;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future<void>.delayed(Duration(seconds: 1 << (attempt - 1))); // 1·2·4초
+      if (!mounted) {
+        _regenerating = false;
+        return;
+      }
+      try {
+        await repo.generateQna(widget.sessionId);
+      } catch (_) {
+        // 재접수 실패(일시적 오류 등)해도 아래 refetch로 상태를 다시 판정한다.
+      } finally {
+        _regenerating = false;
+        if (mounted) refetch(); // 즉시 재폴링 → 스냅샷 갱신, 오래된 failed 재트리거 방지
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final repo = context.read<SessionRepository>();
@@ -43,12 +76,15 @@ class _QnaPageState extends State<QnaPage> {
         child: ResponsivePage(
           child: PollingBuilder<QnaState>(
             fetch: () => repo.getQna(widget.sessionId),
-            // 종료(ended) 또는 생성 실패(failed)면 폴링을 멈춘다. 그 외(생성 중·진행
-            // 중)는 계속 폴링한다.
+            // 종료(ended)까지 계속 폴링한다. 생성 실패(failed)에도 자동 재생성이
+            // 남아 있으면 멈추지 않고(사용자는 계속 대기 화면), 재시도를 소진했을
+            // 때만 폴링을 멈추고 수동 재생성 안내를 띄운다.
             isDone: (q) =>
-                q.status == QnaStatus.ended || q.status == QnaStatus.failed,
+                q.status == QnaStatus.ended ||
+                (q.status == QnaStatus.failed &&
+                    _autoRegenCount >= _maxAutoRegen),
             onDone: (q) {
-              // 종료만 결과 화면으로. 실패는 builder가 재생성 안내를 띄운다.
+              // 종료만 결과 화면으로. 소진된 실패는 builder가 안내를 띄운다.
               if (q.status != QnaStatus.ended) return;
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (context.mounted) {
@@ -62,11 +98,16 @@ class _QnaPageState extends State<QnaPage> {
               if (snap.error != null) {
                 return _ErrorRetry(error: snap.error!, onRetry: retry);
               }
-              // 질문 생성 실패 — 같은 폴링 재시도가 아니라 생성을 다시 접수해야 한다
-              // (세션 failed → generating_questions 재시도 경로). 이후 폴링 재개.
+              // 생성 실패 — 남은 자동 재시도가 있으면 몰래 다시 생성하고 대기 화면을
+              // 유지한다. 소진하면 그때만 수동 재생성 안내를 띄운다.
               if (qna != null && qna.status == QnaStatus.failed) {
+                if (_autoRegenCount < _maxAutoRegen) {
+                  _scheduleAutoRegen(repo, retry);
+                  return const _GeneratingView();
+                }
                 return _GenerationFailed(
                   onRetry: () async {
+                    _autoRegenCount = 0; // 수동 재시도 → 자동 예산 초기화
                     await repo.generateQna(widget.sessionId);
                     retry();
                   },
