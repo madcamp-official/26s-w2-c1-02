@@ -8,10 +8,11 @@ import '../../state/team_controller.dart';
 import '../common/app_back_button.dart';
 import '../common/fade_slide_in.dart';
 import '../common/responsive_page.dart';
+import 'invite_code_dialog.dart';
 
-/// 팀 만들기 (와이어프레임 c1) — 팀 이름 → 팀원 초대.
-/// 이름 확정 시 팀원 초대 단계가 fade-slide-in으로 등장한다.
-/// (초대 링크는 팀 생성 후 팀 상세 화면에서 발급하므로 여기엔 두지 않음)
+/// 팀 만들기 (와이어프레임 c1) — 팀 이름 → 만들기 → 초대코드 표시.
+/// 팀 초대는 초대코드로 통일(§11-2) — 생성 완료 시 코드를 바로 보여주고,
+/// 이후에도 팀 상세의 "+ 초대"에서 같은 코드를 다시 볼 수 있다.
 class CreateTeamPage extends StatefulWidget {
   const CreateTeamPage({super.key});
 
@@ -23,17 +24,14 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
   static const _maxNameLength = 20;
 
   final _nameController = TextEditingController();
-  final _emailController = TextEditingController();
 
   String? _nameError;
   bool _nameConfirmed = false;
-  final List<String> _invitedEmails = [];
   bool _submitting = false;
 
   @override
   void dispose() {
     _nameController.dispose();
-    _emailController.dispose();
     super.dispose();
   }
 
@@ -53,15 +51,6 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
     });
   }
 
-  void _addEmail() {
-    final email = _emailController.text.trim();
-    if (email.isEmpty || !email.contains('@')) return;
-    setState(() {
-      _invitedEmails.add(email);
-      _emailController.clear();
-    });
-  }
-
   Future<void> _submit() async {
     if (!_nameConfirmed) return;
     setState(() => _submitting = true);
@@ -69,9 +58,10 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
       final teamCtrl = context.read<TeamController>();
       final repo = context.read<TeamRepository>();
       final team = await teamCtrl.create(_nameController.text.trim());
-      for (final email in _invitedEmails) {
-        await repo.inviteByEmail(team.id, email);
-      }
+      // 생성 완료 화면 = 초대코드 다이얼로그 (§11-2) — 닫으면 팀 상세로.
+      final link = await repo.createInviteLink(team.id);
+      if (!mounted) return;
+      await showInviteCodeDialog(context, link.token);
       if (!mounted) return;
       context.go('/');
       context.push('/teams/${team.id}');
@@ -130,57 +120,17 @@ class _CreateTeamPageState extends State<CreateTeamPage> {
                 ),
               ),
 
-              // 2) 팀원 초대 + 팀 만들기 — 이름 확정 후 fade-in
+              // 2) 팀 만들기 — 이름 확정 후 fade-in. 초대는 생성 후 초대코드로(§11-2).
               if (_nameConfirmed)
                 FadeSlideIn(
-                  key: const ValueKey('step-invite'),
+                  key: const ValueKey('step-create'),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const SizedBox(height: 16),
-                      const Text('팀원 초대',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _emailController,
-                              decoration:
-                                  const InputDecoration(hintText: '이메일 주소'),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          TextButton(
-                            style: TextButton.styleFrom(
-                              backgroundColor:
-                                  AppColors.accent.withValues(alpha: 0.15),
-                              foregroundColor: AppColors.accent,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 18),
-                            ),
-                            onPressed: _addEmail,
-                            child: const Text('초대 보내기'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _invitedEmails
-                            .map((e) => Chip(
-                                  label: Text(e),
-                                  onDeleted: () =>
-                                      setState(() => _invitedEmails.remove(e)),
-                                ))
-                            .toList(),
-                      ),
-                      const SizedBox(height: 8),
                       const Text(
-                        '초대를 수락하면 자동으로 팀에 합류돼요.\n'
-                        '팀을 만든 후에도 초대 링크로 팀원을 부를 수 있어요.',
+                        '팀을 만들면 초대코드가 발급돼요.\n'
+                        '코드를 공유하면 팀원이 홈의 "초대코드로 참여"로 합류할 수 있어요.',
                         style: TextStyle(
                             fontSize: 12, color: AppColors.textSecondary),
                       ),

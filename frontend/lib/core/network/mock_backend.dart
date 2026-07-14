@@ -159,9 +159,10 @@ class MockBackend implements HttpBackend {
     g = _match(path, r'^/teams/([^/]+)/invites/link$');
     if (g != null) {
       if (m == 'POST' || m == 'GET') {
+        // 초대코드 8자 (§11-1: 대문자+숫자, I·O·0·1 제외) — 실서버 형태와 동일하게.
         return _ok({
-          'token': 'lnk_tok_${g[0]}',
-          'url': 'https://rehearsal.io/invites/lnk_tok_${g[0]}',
+          'token': 'A2B3C4D5',
+          'url': 'https://rehearsal.io/invites/A2B3C4D5',
           'expires_at':
               DateTime.now().add(const Duration(days: 7)).toIso8601String(),
         });

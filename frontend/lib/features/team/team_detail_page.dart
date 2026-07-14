@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
@@ -13,6 +12,7 @@ import '../../state/session_controller.dart';
 import '../../state/team_controller.dart';
 import '../common/app_back_button.dart';
 import '../common/responsive_page.dart';
+import 'invite_code_dialog.dart';
 
 /// 팀 페이지 (와이어프레임 c3) — 세션 목록 + 새 발표 + 팀 관리 시트(c4).
 class TeamDetailPage extends StatefulWidget {
@@ -78,7 +78,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
                         )),
                     ActionChip(
                       label: const Text('+ 초대', style: TextStyle(fontSize: 12)),
-                      onPressed: () => _copyInviteLink(team),
+                      onPressed: () => _showInviteCode(team),
                     ),
                   ],
                 ),
@@ -98,14 +98,11 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
     );
   }
 
-  Future<void> _copyInviteLink(Team team) async {
+  /// 초대코드 발급·표시 (§11-2 — 링크 복사에서 코드 표시로 교체, API는 동일).
+  Future<void> _showInviteCode(Team team) async {
     final link =
         await context.read<TeamRepository>().createInviteLink(team.id);
-    await Clipboard.setData(ClipboardData(text: link.url));
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('초대 링크가 클립보드에 복사됐어요')));
-    }
+    if (mounted) await showInviteCodeDialog(context, link.token);
   }
 
   /// 팀 관리 바텀시트 (와이어프레임 c4).
@@ -132,7 +129,7 @@ class _TeamDetailPageState extends State<TeamDetailPage> {
               title: const Text('팀원 초대하기'),
               onTap: () {
                 Navigator.pop(ctx);
-                _copyInviteLink(team);
+                _showInviteCode(team);
               },
             ),
             ListTile(
