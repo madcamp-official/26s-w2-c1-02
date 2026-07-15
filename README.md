@@ -229,9 +229,9 @@ bash setup_tts.sh && bash setup_stt.sh   # 이후 start_tts.sh / start_stt.sh
 
 ### Keep — 잘 된 점, 다음에도 유지할 것
 
--
--
--
+- **VM이 갑자기 죽었지만 다른 팀원의 VM으로 재배포해서 문제를 해결함.** 빠르게 복구할 수 있었던 이유는 인프라가 전부 코드·문서로 남아 있었기 때문 — 배포 절차는 `update.sh` 원커맨드 스크립트와 systemd 유닛으로, DB 스키마는 `backend/migrations/`의 SQL로, 환경 설정은 `.env.example`로 재현 가능했다. 특히 Cloudflare Tunnel 구조 덕분에 DNS·IP를 바꿀 필요 없이 새 VM에서 터널만 다시 연결하면 같은 도메인(horsetail.madcamp-kaist.org)으로 서비스가 그대로 이어졌다. "서버는 언제든 죽을 수 있다"는 전제로 배포를 스크립트화·문서화해 두는 습관은 다음에도 유지.
+- **GPU 서버를 사용하면 VRAM 예산을 미리 정하고 모델을 선정해야 함.** RTX 3090 24GB 한 장에 TTS(VoxCPM2)와 STT(Qwen3-ASR + ForcedAligner)를 동시에 상주시켜야 했는데, 먼저 "TTS ~11GB + STT ~10GB + 여유 ~3GB"로 예산을 나눈 뒤 그 안에 들어오는 모델을 골랐다. 실제로 기본 설정을 그대로 쓰면 예산이 깨졌고(H100 96GB 기준 YAML → OOM, vLLM 기본 `util` 값 → 기동 실패), KV 캐시 크기 축소·기동 순서 고정(TTS 먼저 → STT가 나머지 점유) 같은 재배분으로 해결했다. 이때 실측값과 조정 근거를 [infra/gpu-server/README.md](infra/gpu-server/README.md)에 기록해 둔 것이 재기동·장애 대응 때마다 유효했다. "모델 먼저 고르고 메모리에 끼워 맞추기"가 아니라 **예산 확정 → 모델 선정 → 실측 검증** 순서를 다음에도 유지.
+- **무료 LLM API가 생각보다 성능이 좋아서 다음에도 사용.** 결제 없는 Gemini API 무료 티어(Flash 계열)만으로 페르소나 질문·꼬리질문·리포트 생성 품질이 시연에 충분했고, 프로젝트 전체 LLM 비용이 0원이었다. 다만 무료 티어 특유의 제약이 실제 장애로 이어졌기에 방어 코드가 필수였다.
 
 ### Problem — 아쉬웠던 점, 개선이 필요한 것
 
