@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -85,13 +86,38 @@ class BackendResponse {
   }
 }
 
+/// 요청이 [RealHttpBackend]의 타임아웃을 넘겨 중단됨.
+/// 폴링·업로드가 응답 없는 연결에 영원히 매달리지 않게 한다.
+class RequestTimeoutException implements Exception {
+  RequestTimeoutException(this.message);
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// 실서버 백엔드 (Mock-off 전환 시 사용).
 class RealHttpBackend implements HttpBackend {
-  RealHttpBackend({required this.baseUrl, http.Client? client})
-      : _client = client ?? http.Client();
+  RealHttpBackend({
+    required this.baseUrl,
+    http.Client? client,
+    this.requestTimeout = const Duration(seconds: 30),
+    this.uploadTimeout = const Duration(minutes: 10),
+  }) : _client = client ?? http.Client();
 
   final String baseUrl;
   final http.Client _client;
+
+  /// 일반(JSON) 요청 상한. 없으면 응답 없는 연결에 폴링이 조용히 영구 정지한다
+  /// (PollingBuilder는 이전 요청이 안 끝나면 다음 틱을 건너뛰므로).
+  final Duration requestTimeout;
+
+  /// 업로드(multipart) 상한 — 녹음 파일은 수십 MB라 넉넉하게 잡는다.
+  final Duration uploadTimeout;
+
+  Never _onTimeout(Duration limit) =>
+      throw RequestTimeoutException(
+          '서버 응답이 ${limit.inSeconds}초 안에 오지 않았어요. 네트워크를 확인해주세요.');
 
   @override
   Future<BackendResponse> send(BackendRequest request) async {
@@ -105,7 +131,10 @@ class RealHttpBackend implements HttpBackend {
         ..fields.addAll(m.fields)
         ..files.add(
             http.MultipartFile.fromBytes('file', m.bytes, filename: m.fileName));
-      res = await http.Response.fromStream(await multi.send());
+      res = await multi
+          .send()
+          .then(http.Response.fromStream)
+          .timeout(uploadTimeout, onTimeout: () => _onTimeout(uploadTimeout));
     } else {
       final headers = {
         ...request.headers,
@@ -113,13 +142,15 @@ class RealHttpBackend implements HttpBackend {
       };
       final body =
           request.jsonBody == null ? null : jsonEncode(request.jsonBody);
-      res = switch (request.method) {
-        'GET' => await _client.get(uri, headers: headers),
-        'POST' => await _client.post(uri, headers: headers, body: body),
-        'PATCH' => await _client.patch(uri, headers: headers, body: body),
-        'DELETE' => await _client.delete(uri, headers: headers),
+      final future = switch (request.method) {
+        'GET' => _client.get(uri, headers: headers),
+        'POST' => _client.post(uri, headers: headers, body: body),
+        'PATCH' => _client.patch(uri, headers: headers, body: body),
+        'DELETE' => _client.delete(uri, headers: headers),
         _ => throw ArgumentError('unsupported method ${request.method}'),
       };
+      res = await future.timeout(requestTimeout,
+          onTimeout: () => _onTimeout(requestTimeout));
     }
 
     dynamic decoded;

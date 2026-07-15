@@ -56,7 +56,9 @@ class _UploadRecordingPageState extends State<UploadRecordingPage> {
             bytes: file.bytes!,
             startedAt: now, // 파일 모드: 실제 발표 시각은 알 수 없음 — 업로드 시각 기록
             endedAt: now,
-            durationSeconds: 0, // 서버가 디코딩해서 실측 (클라이언트는 모름)
+            // 0 = 파일 모드 신호. STT 잡이 ffmpeg로 실측해 갱신한다
+            // (리포트 WPM 분모·60분 상한 검증 — stt_queue._run_stt)
+            durationSeconds: 0,
           );
       if (mounted) {
         context.pushReplacement('/sessions/${widget.sessionId}/processing');

@@ -120,18 +120,18 @@ def submit_answer(
     question = _require_current_question(session, question_id, db)
     ext = _audio_ext(file)
     if ext is None:
-        raise ApiError(415, "UNSUPPORTED_MEDIA", "mp3 · wav · m4a 파일만 올릴 수 있어요.")
+        raise ApiError(415, "UNSUPPORTED_MEDIA", "mp3 · wav · m4a · webm 파일만 올릴 수 있어요.")
     if duration_seconds < 0:
         raise ApiError(400, "INVALID_DURATION", "재생 길이가 올바르지 않아요.")
 
-    data = file.file.read()
-    if len(data) == 0:
-        raise ApiError(400, "EMPTY_FILE", "빈 파일이에요.")
-    if len(data) > _MAX_ANSWER_BYTES:
-        raise ApiError(413, "FILE_TOO_LARGE", "답변은 200MB 이하만 올릴 수 있어요.")
-
     key = storage.answer_key(session.id, question_id, ext)
-    storage.save(key, data)
+    try:
+        # 스트리밍 저장 — 답변 오디오도 통째로 메모리에 올리지 않는다 (녹음 업로드와 동일)
+        storage.save_stream(key, file.file, max_bytes=_MAX_ANSWER_BYTES)
+    except storage.EmptyUploadError:
+        raise ApiError(400, "EMPTY_FILE", "빈 파일이에요.")
+    except storage.FileTooLargeError:
+        raise ApiError(413, "FILE_TOO_LARGE", "답변은 200MB 이하만 올릴 수 있어요.")
 
     answer = db.get(models.Answer, question_id)
     old_key = answer.audio_storage_key if answer is not None else None

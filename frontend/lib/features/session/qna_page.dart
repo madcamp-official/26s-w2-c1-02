@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/audio/audio_player_service.dart';
 import '../../core/audio/recorder_service.dart';
+import '../../core/network/api_client.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/models/enums.dart';
 import '../../data/models/qna.dart';
@@ -186,11 +187,19 @@ class _QuestionViewState extends State<_QuestionView> {
   /// 처리한다(spec §4.4 A12 — 답변 시간초과 → 자동 다음).
   static const int _answerStartLimitSeconds = 30;
 
+  /// TTS 준비(waitingTts)를 기다려줄 시간. 서버 재시작 등으로 합성이 늦어지면
+  /// 이 시간 뒤 "음성 없이 답변하기"를 노출해 무한 대기를 막는다.
+  static const int _ttsWaitLimitSeconds = 20;
+
   late final AudioPlayerService _player = context.read<AudioPlayerService>();
   late final SessionRepository _repo = context.read<SessionRepository>();
 
   RecorderService? _recorder;
   _Phase _phase = _Phase.waitingTts;
+
+  /// TTS 대기 타임아웃 — true면 waitingTts 화면에 음성 없이 진행 버튼을 띄운다.
+  Timer? _ttsWaitTimer;
+  bool _ttsWaitTimedOut = false;
 
   /// 제출 대기 중인 녹음 바이트 — 업로드 실패 시 재녹음 없이 재제출용.
   List<int>? _answerBytes;
@@ -230,10 +239,17 @@ class _QuestionViewState extends State<_QuestionView> {
       _playTts();
     } else {
       _phase = _Phase.waitingTts;
+      // 합성이 오래 걸리면(서버 재시작으로 잡 유실 등) 음성 없이 진행할 길을 연다.
+      _ttsWaitTimer = Timer(const Duration(seconds: _ttsWaitLimitSeconds), () {
+        if (mounted && _phase == _Phase.waitingTts) {
+          setState(() => _ttsWaitTimedOut = true);
+        }
+      });
     }
   }
 
   Future<void> _playTts() async {
+    _ttsWaitTimer?.cancel();
     final url = _q.tts.audioUrl;
     if (url == null) {
       // 음성 URL이 없으면 재생 없이 바로 답변 시작 대기로.
@@ -349,16 +365,36 @@ class _QuestionViewState extends State<_QuestionView> {
     await _startRecording();
   }
 
+  /// 서버 상태가 이미 넘어간 레이스(답변 STT가 current를 옮김·세션 종료됨)면
+  /// 폴링이 알아서 수렴하므로 조용히 무시해도 되는 에러 코드들.
+  static const _staleQnaCodes = {'NOT_CURRENT_QUESTION', 'QNA_NOT_ACTIVE'};
+
   Future<void> _pass({String reason = 'user'}) async {
     _waitTimer?.cancel();
     await _stopEverything();
-    await _repo.passQuestion(widget.sessionId, _q.id, reason: reason);
+    try {
+      await _repo.passQuestion(widget.sessionId, _q.id, reason: reason);
+    } on ApiException catch (e) {
+      if (!_staleQnaCodes.contains(e.code)) {
+        _snack('질문을 넘기지 못했어요: ${e.message} — 다시 시도해주세요');
+      }
+    } catch (e) {
+      _snack('질문을 넘기지 못했어요: $e — 다시 시도해주세요');
+    }
   }
 
   Future<void> _end() async {
     _waitTimer?.cancel();
     await _stopEverything();
-    await _repo.endQna(widget.sessionId);
+    try {
+      await _repo.endQna(widget.sessionId);
+    } on ApiException catch (e) {
+      if (!_staleQnaCodes.contains(e.code)) {
+        _snack('질의응답을 마치지 못했어요: ${e.message} — 다시 시도해주세요');
+      }
+    } catch (e) {
+      _snack('질의응답을 마치지 못했어요: $e — 다시 시도해주세요');
+    }
   }
 
   Future<void> _stopEverything() async {
@@ -370,12 +406,15 @@ class _QuestionViewState extends State<_QuestionView> {
     }
   }
 
-  void _snack(String msg) => ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text(msg)));
+  void _snack(String msg) {
+    if (!mounted) return; // await 후 호출될 수 있다 — dispose된 context 접근 방지
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
 
   @override
   void dispose() {
     _waitTimer?.cancel();
+    _ttsWaitTimer?.cancel();
     unawaited(_player.stop());
     final recorder = _recorder;
     if (recorder != null && recorder.isRecording) {
@@ -455,6 +494,16 @@ class _QuestionViewState extends State<_QuestionView> {
           return _center(
             danger: true,
             label: '질문 음성 생성에 실패했어요',
+            child: OutlinedButton(
+              onPressed: () => _startRecording(),
+              child: const Text('음성 없이 답변하기'),
+            ),
+          );
+        }
+        if (_ttsWaitTimedOut) {
+          // 합성 지연/유실 — 무한 대기 대신 텍스트만 읽고 답변할 수 있게 한다.
+          return _center(
+            label: '질문 음성 준비가 늦어지고 있어요',
             child: OutlinedButton(
               onPressed: () => _startRecording(),
               child: const Text('음성 없이 답변하기'),

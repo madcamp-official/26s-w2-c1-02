@@ -15,11 +15,10 @@ LLM 제공자는 async라 sync 잡에서 asyncio.run으로 호출한다.
 import asyncio
 import logging
 import os
-import tempfile
-from pathlib import Path
+import threading
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core import storage
 from app.db import models
@@ -67,6 +66,15 @@ def run_generate(session_id: str) -> None:
             ))
         except Exception:
             logger.exception("질문 생성 실패: %s", session_id)
+            if session.status == SessionStatus.generating_questions:
+                session.status = SessionStatus.failed
+            db.commit()
+            return
+
+        if not drafts:
+            # LLM이 유효 질문 0개를 주면 qna로 전이해도 FE가 '생성 중' 화면에서 영원히
+            # 기다린다(질문 없는 qna) — 실패로 흡수해 자동 재생성 루프를 태운다.
+            logger.error("질문 생성 결과가 비어 있음: %s", session_id)
             if session.status == SessionStatus.generating_questions:
                 session.status = SessionStatus.failed
             db.commit()
@@ -131,6 +139,38 @@ def _synthesize_one(db, question: models.Question, *, client: httpx.Client | Non
     db.commit()
 
 
+def recover_tts() -> None:
+    """서버 재시작으로 유실된 질문 TTS 잡 복구 (stt_queue/report_jobs.recover와 동일 성격).
+
+    TTS는 run_generate 안에서 인라인 합성이라 재시작하면 tts_status가
+    queued/processing에 영원히 갇히고, FE는 '질문 음성을 준비하고 있어요'에서
+    무한 대기한다. processing을 queued로 되돌린 뒤 세션 단위로 재합성한다.
+    앱 시작 훅(main.py lifespan)에서 호출."""
+    with SessionLocal() as db:
+        # 합성 도중 죽은 잡 — 서버가 방금 떴으니 진행 중인 합성은 없다. queued로 복귀.
+        db.execute(
+            update(models.Question)
+            .where(models.Question.tts_status == AsyncStatus.processing)
+            .values(tts_status=AsyncStatus.queued)
+        )
+        db.commit()
+        session_ids = db.scalars(
+            select(models.Question.session_id)
+            .where(models.Question.tts_status == AsyncStatus.queued)
+            .distinct()
+        ).all()
+    if not session_ids:
+        return
+    logger.info("미완료 질문 TTS %d세션 복구", len(session_ids))
+
+    def _run_all() -> None:
+        for sid in session_ids:
+            with SessionLocal() as db:
+                _synthesize_session_tts(db, sid)
+
+    threading.Thread(target=_run_all, name="tts-recover", daemon=True).start()
+
+
 # ── 작업 4. 답변 STT + 꼬리질문 (STT 워커 스레드) ─────────────────────
 
 def run_answer_stt(question_id: str) -> None:
@@ -143,14 +183,9 @@ def run_answer_stt(question_id: str) -> None:
         if answer is None or question is None:  # 제출 후 삭제된 경우
             return
 
-        tmp_path: str | None = None
         try:
-            data = storage.load(answer.audio_storage_key)
-            suffix = Path(answer.audio_storage_key).suffix or ".bin"
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
-                f.write(data)
-                tmp_path = f.name
-            segments = transcribe_recording(tmp_path)
+            # 로컬 스토리지 파일을 그대로 전사 — bytes 적재·임시파일 복사 불필요
+            segments = transcribe_recording(storage.local_path(answer.audio_storage_key))
         except UnsupportedMediaError as e:
             _fail_answer(db, answer, "UNSUPPORTED_MEDIA", str(e))
             return
@@ -158,9 +193,6 @@ def run_answer_stt(question_id: str) -> None:
             # SttError·StorageError·예상못한 버그까지 전부 failed로 흡수(재제출로 재시도).
             _fail_answer(db, answer, "STT_FAILED", str(e))
             return
-        finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
 
         answer.text = " ".join(s["text"] for s in segments).strip()
         answer.status = AnswerStatus.ready
@@ -168,13 +200,14 @@ def run_answer_stt(question_id: str) -> None:
         answer.error_message = None
         db.commit()
 
-        _decide_follow_up_and_advance(db, question, answer)
+        ended = _decide_follow_up_and_advance(db, question, answer)
 
-        # 마지막 답변으로 자동 종료됐으면(A7) 리포트를 인라인 생성 — 꼬리질문 TTS와
-        # 같은 규칙(워커 스레드라 BackgroundTasks를 못 씀). run_report는 자기 세션을 연다.
-        session = db.get(models.RehearsalSession, question.session_id)
-        if session is not None and session.status == SessionStatus.completed:
-            report_jobs.run_report(session.id)
+        # 이 답변으로 세션이 **자동 종료된 경우에만**(A7) 리포트를 인라인 생성 —
+        # 워커 스레드라 BackgroundTasks를 못 쓴다. 사용자 종료(qna/end)·마지막 패스
+        # 경로는 각 라우트의 BackgroundTasks가 이미 돌리므로 여기서 중복 실행하면
+        # 두 잡이 같은 점수 행을 지웠다 넣다 충돌할 수 있다.
+        if ended:
+            report_jobs.run_report(question.session_id)
 
 
 def _fail_answer(db, answer: models.Answer, code: str, message: str) -> None:
@@ -186,9 +219,24 @@ def _fail_answer(db, answer: models.Answer, code: str, message: str) -> None:
     db.commit()
 
 
-def _decide_follow_up_and_advance(db, question: models.Question, answer: models.Answer) -> None:
-    """꼬리질문 판정(깊이 1 제한, A11) → 자식 삽입 후 current 이동, 없으면 다음 1차 질문."""
+def _decide_follow_up_and_advance(db, question: models.Question, answer: models.Answer) -> bool:
+    """꼬리질문 판정(깊이 1 제한, A11) → 자식 삽입 후 current 이동, 없으면 다음 1차 질문.
+
+    반환값: 이 호출이 세션을 **자동 종료**시켰는지(True면 호출자가 리포트를 돌린다).
+    답변 STT가 도는 사이 사용자가 종료(qna/end)했거나 패스로 current가 이미
+    이동했으면 진행 상태를 건드리지 않는다 — 안 막으면 completed 세션에 꼬리질문이
+    꽂히거나, 패스로 넘어간 질문을 한 번 더 넘겨 다음 질문을 건너뛴다."""
     session = db.get(models.RehearsalSession, question.session_id)
+    if (
+        session is None
+        or session.status != SessionStatus.qna
+        or session.current_question_id != question.id
+    ):
+        # 늦게 끝난 STT — 답변 텍스트는 이미 저장됐고(위 commit) 진행만 건드리지 않는다.
+        answer.follow_up_status = FollowUpStatus.none
+        db.commit()
+        return False
+
     child: models.Question | None = None
 
     can_follow = (
@@ -222,17 +270,19 @@ def _decide_follow_up_and_advance(db, question: models.Question, answer: models.
         session.current_question_id = child.id
         db.commit()
         _synthesize_one(db, child)  # 꼬리질문 TTS 인라인
-    else:
-        answer.follow_up_status = FollowUpStatus.none
-        _advance_to_next_primary(db, session, question)
-        db.commit()
+        return False
+
+    answer.follow_up_status = FollowUpStatus.none
+    ended = _advance_to_next_primary(db, session, question)
+    db.commit()
+    return ended
 
 
 def _advance_to_next_primary(
     db, session: models.RehearsalSession, question: models.Question,
     *, end_reason: EndedReason = EndedReason.count_reached,
-) -> None:
-    """current를 다음 1차 질문으로. 더 없으면 자동 종료.
+) -> bool:
+    """current를 다음 1차 질문으로. 더 없으면 자동 종료. 반환값: 종료됐는지.
 
     종료 사유는 기본 count_reached(질의 수 도달). pass(reason=timeout)로 마지막 질문을
     넘긴 경우엔 호출자가 timeout을 넘긴다 (A12: 마지막이 시간초과면 timeout)."""
@@ -246,8 +296,9 @@ def _advance_to_next_primary(
     )
     if nxt is not None:
         session.current_question_id = nxt.id
-    else:
-        end_session(db, session, end_reason)
+        return False
+    end_session(db, session, end_reason)
+    return True
 
 
 # ── 작업 4-3. 답변 패스 (동기 — STT 없이 바로 다음) ───────────────────

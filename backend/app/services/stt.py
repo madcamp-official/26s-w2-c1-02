@@ -32,6 +32,10 @@ from pathlib import Path
 
 import httpx
 
+# §1.3: 녹음 길이 상한(60분). 업로드 검증(recordings 라우터)과 파일 모드
+# 서버 실측 검증(stt_queue._run_stt)이 같은 값을 공유한다.
+MAX_RECORDING_SECONDS = 3600
+
 # 청크 파라미터 — Day 3 실측 근거(60s→2.1s, RTF≈0.03). 경계 병합 품질이
 # 나쁘면 CHUNK_SEC=290으로 전환 가능 (stt-client-workflow.md 재검토 표)
 CHUNK_SEC = 60
@@ -98,6 +102,20 @@ def transcribe_recording(
                 )
     words.sort(key=lambda w: (w["start"], w["end"]))
     return _group_words(words)
+
+
+def probe_duration_seconds(audio_path: str | Path) -> float:
+    """오디오 파일의 실제 재생 길이(초)를 반환한다.
+
+    파일 모드 업로드(§4.3 d3)는 클라이언트가 길이를 몰라 duration_seconds=0을
+    보낸다 — STT 잡이 이 함수로 실측해 리포트 WPM 분모와 60분 상한 검증에 쓴다.
+    ffmpeg로 16kHz wav 정규화 후 헤더에서 읽으므로 컨테이너의 부정확한 메타데이터에
+    속지 않는다. 디코드 불가 시 UnsupportedMediaError.
+    """
+    with tempfile.TemporaryDirectory(prefix="stt_probe_") as td:
+        wav = _normalize_audio(Path(audio_path), Path(td) / "probe.wav")
+        with wave.open(str(wav), "rb") as w:
+            return w.getnframes() / w.getframerate()
 
 
 # ── 1. 오디오 정규화 (ffmpeg → 16kHz mono s16 wav) ──────────────────────────

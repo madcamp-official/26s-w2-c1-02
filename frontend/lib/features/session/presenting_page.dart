@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -34,6 +35,10 @@ class PresentingPage extends StatefulWidget {
 enum _MicState { checking, denied, unsupported, recording }
 
 class _PresentingPageState extends State<PresentingPage> {
+  /// 서버 상한(3600초, RECORDING_TOO_LONG) 직전에 자동으로 발표를 마친다 —
+  /// 안 하면 60분 초과분은 업로드가 400으로 영원히 실패해 재시도 루프에 갇힌다.
+  static const int _maxRecordSeconds = 3595;
+
   Session? _session;
   Timer? _timer;
   int _elapsedSeconds = 0;
@@ -83,7 +88,13 @@ class _PresentingPageState extends State<PresentingPage> {
     // §0.8: 실시간 `recording/start` 표시는 청크 파이프라인용이었으므로 호출하지 않는다.
     // 일괄 업로드는 `POST /recording`이 draft → transcribing 전이를 직접 수행.
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() => _elapsedSeconds++);
+      if (!mounted) return;
+      setState(() => _elapsedSeconds++);
+      if (_elapsedSeconds >= _maxRecordSeconds && !_finishing) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('최대 녹음 시간(60분)에 도달해 발표를 자동으로 마칠게요')));
+        _finish();
+      }
     });
     setState(() => _mic = _MicState.recording);
   }
@@ -120,7 +131,9 @@ class _PresentingPageState extends State<PresentingPage> {
             bytes: result.wavBytes,
             startedAt: _startedAt ?? DateTime.now(),
             endedAt: _endedAt ?? DateTime.now(),
-            durationSeconds: result.durationSeconds.round(),
+            // 자동 종료 직후 stop()까지의 잔여 샘플로 상한을 살짝 넘을 수 있어
+            // 서버 검증(3600초) 안으로 클램프한다.
+            durationSeconds: min(result.durationSeconds.round(), 3600),
           );
       _pendingUpload = null;
       if (mounted) {

@@ -12,6 +12,11 @@
 #   프론트  = flutter build web → /var/www/rehearsal 로 동기화 (nginx가 서빙)
 #   .env    = 절대 건드리지 않음 (SMTP·JWT 등 시크릿은 수동 관리)
 #
+# ⚠️ nginx 체크리스트 (녹음 업로드 502/413 예방 — 60분 WAV ≈ 115MB):
+#   client_max_body_size 200m;              # 미설정(기본 1m)이면 업로드가 413
+#   proxy_read_timeout·proxy_send_timeout   # 느린 회선 대용량 업로드 대비 (예: 300s)
+#   502가 나면 journalctl -u rehearsal-backend 로 백엔드 OOM/재시작 여부부터 확인.
+#
 # ⚠️ backend/migrations/ 에 새 SQL이 들어오면 자동 적용하지 않고 경고만 한다 —
 #    migrations/README.md 절차대로 (필요 시 데이터 SQL 먼저 → 코드 반영) 직접 실행할 것.
 #    (예: 이메일 인증 배포 때 §7-2 일괄 인증 SQL을 서버 재시작 전에 실행해야 했음)

@@ -13,7 +13,7 @@ from app.api.routes import (
 from app.core.config import settings
 from app.core.errors import ApiError, api_error_handler, validation_error_handler
 from app.db.session import get_db
-from app.services import report_jobs, stt_queue
+from app.services import qna_jobs, report_jobs, stt_queue
 
 # 앱 로거(rehearsal.*)를 콘솔에 노출한다. uvicorn 기본 로깅은 자기 로거에만 핸들러를
 # 붙이므로, 이 설정이 없으면 INFO 로그(특히 EMAIL_PROVIDER=mock의 인증코드 출력)가
@@ -32,6 +32,10 @@ async def lifespan(app: FastAPI):
     stt_queue.recover()
     # 같은 이유로 queued/processing에 멈춘 리포트 잡도 재실행한다 (A7).
     report_jobs.recover()
+    # BackgroundTasks·인라인 잡도 마찬가지 — 자료 파싱과 질문 TTS를 되살린다.
+    # (안 하면 material은 retry 불가(=failed만 허용) 상태로, TTS는 FE 무한 대기로 갇힌다)
+    materials.recover()
+    qna_jobs.recover_tts()
     yield
 
 

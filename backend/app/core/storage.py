@@ -13,6 +13,9 @@ storage_key 규약 (팀원3 TTS 저장·삭제 cascade가 공유):
 
 import hashlib
 import hmac
+import os
+import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 from app.core.config import settings
@@ -26,6 +29,14 @@ if not _BASE_DIR.is_absolute():
 
 class StorageError(Exception):
     """스토리지 계층 오류 (경로 위반·서명 불일치·만료). 라우터에서 4xx로 변환."""
+
+
+class EmptyUploadError(StorageError):
+    """save_stream에 0바이트가 들어옴. 라우터에서 400 EMPTY_FILE로 변환."""
+
+
+class FileTooLargeError(StorageError):
+    """save_stream의 max_bytes 초과. 라우터에서 413 FILE_TOO_LARGE로 변환."""
 
 
 # ── storage_key 빌더 (규약 한 곳에서만 생성) ──────────────────────────
@@ -76,6 +87,41 @@ def save(key: str, data: bytes) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return key
+
+
+_COPY_CHUNK_BYTES = 1024 * 1024
+
+
+def save_stream(key: str, fileobj, *, max_bytes: int | None = None) -> int:
+    """파일 객체를 청크 단위로 key 위치에 저장하고 저장 크기(바이트)를 반환한다.
+
+    업로드 전체를 메모리에 올리지 않는다 — 대용량 녹음(60분 WAV ≈ 115MB)을
+    save(bytes)로 받으면 요청마다 그만큼 RAM을 먹어 저사양 VM에서 OOM(→ nginx 502)
+    위험이 있다. 같은 세션 재업로드가 절반만 쓰다 실패해도 기존 파일이 깨지지 않게
+    임시파일에 쓴 뒤 os.replace로 원자 교체한다.
+
+    0바이트면 EmptyUploadError, max_bytes 초과면 FileTooLargeError — 두 경우 모두
+    기존 파일을 건드리지 않는다.
+    """
+    path = _resolve(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".upload-")
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as out:
+            while chunk := fileobj.read(_COPY_CHUNK_BYTES):
+                size += len(chunk)
+                if max_bytes is not None and size > max_bytes:
+                    raise FileTooLargeError(f"업로드가 최대 크기를 초과했어요: {key}")
+                out.write(chunk)
+        if size == 0:
+            raise EmptyUploadError(f"빈 업로드예요: {key}")
+        os.replace(tmp_name, path)
+    except BaseException:
+        with suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+    return size
 
 
 def load(key: str) -> bytes:

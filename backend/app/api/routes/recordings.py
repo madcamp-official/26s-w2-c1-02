@@ -25,19 +25,21 @@ from app.db.session import get_db
 from app.schemas.session import ErrorInfo, TranscriptDetail, TranscriptSegmentOut
 from app.services import stt_queue
 from app.services.session_state import advance_status
-from app.services.stt import seconds_to_ts
+from app.services.stt import MAX_RECORDING_SECONDS, seconds_to_ts
 
 router = APIRouter(tags=["recordings"])
 
 _MAX_BYTES = 200 * 1024 * 1024  # §1.3: 200MB
-_MAX_DURATION = 3600            # §1.3: 60분
+_MAX_DURATION = MAX_RECORDING_SECONDS  # §1.3: 60분 (STT 잡의 실측 검증과 동일 값)
 # mime → 확장자 (recordings.mime_type 저장값 · storage_key 확장자)
+# webm은 웹 녹음 폴백 산출물(FE FileConstraints와 동일 세트) — ffmpeg가 디코드한다.
 _ALLOWED_AUDIO = {
     "audio/mpeg": "mp3", "audio/mp3": "mp3",
     "audio/wav": "wav", "audio/x-wav": "wav", "audio/wave": "wav",
     "audio/mp4": "m4a", "audio/x-m4a": "m4a",
+    "audio/webm": "webm", "video/webm": "webm",
 }
-_EXT_BY_NAME = {".mp3": "mp3", ".wav": "wav", ".m4a": "m4a", ".mp4": "m4a"}
+_EXT_BY_NAME = {".mp3": "mp3", ".wav": "wav", ".m4a": "m4a", ".mp4": "m4a", ".webm": "webm"}
 
 # 녹음 업로드를 받아들이는 세션 상태 (질의응답 단계 이후엔 거부)
 _UPLOADABLE = {SessionStatus.draft, SessionStatus.recording_in_progress,
@@ -60,21 +62,20 @@ def _store_full_recording(
     session: models.RehearsalSession,
     *,
     file: UploadFile,
-    data: bytes,
+    key: str,
+    size_bytes: int,
     ext: str,
     duration_seconds: int,
     started_at: datetime | None,
     ended_at: datetime | None,
     total_chunks: int | None,
 ) -> str | None:
-    """전체 녹음 파일 저장 + recordings/transcripts 업서트 + transcribing 전이.
+    """전체 녹음 recordings/transcripts 업서트 + transcribing 전이.
 
-    일괄 업로드(§4.3)와 실시간 complete(§4.3.1)가 공유. 반환값은 확장자 변경
+    파일은 호출자가 storage.save_stream으로 이미 key에 저장한 상태다(메모리 적재
+    없이). 일괄 업로드(§4.3)와 실시간 complete(§4.3.1)가 공유. 반환값은 확장자 변경
     재업로드로 고아가 된 옛 storage_key(정리 대상) 또는 None. **커밋은 호출자**가 한다.
     total_chunks는 청크 complete만 값을 넣고 일괄 경로는 None(비청크 의미)."""
-    key = storage.recording_key(session.id, ext)
-    storage.save(key, data)
-
     # 동시 업로드 직렬화 (material과 동일 — 1:1 행 PK 충돌 방지)
     db.refresh(session, with_for_update=True)
 
@@ -86,7 +87,7 @@ def _store_full_recording(
         db.add(recording)
     recording.status = AsyncStatus.ready
     recording.file_name = file.filename or f"recording.{ext}"
-    recording.file_size_bytes = len(data)
+    recording.file_size_bytes = size_bytes
     recording.mime_type = file.content_type or f"audio/{ext}"
     recording.duration_seconds = duration_seconds
     recording.storage_key = key
@@ -142,22 +143,28 @@ def upload_recording(
     """녹음 업로드 → 저장 + transcribing 전이 + STT 큐 → 202. 재업로드는 덮어쓰기."""
     ext = _audio_ext(file)
     if ext is None:
-        raise ApiError(415, "UNSUPPORTED_MEDIA", "mp3 · wav · m4a 파일만 업로드할 수 있어요.")
+        raise ApiError(415, "UNSUPPORTED_MEDIA",
+                       "mp3 · wav · m4a · webm 파일만 업로드할 수 있어요.")
     if duration_seconds < 0 or duration_seconds > _MAX_DURATION:
         raise ApiError(400, "RECORDING_TOO_LONG", "녹음은 60분 이하만 가능해요.")
 
-    data = file.file.read()
-    if len(data) == 0:
-        raise ApiError(400, "EMPTY_FILE", "빈 파일이에요.")
-    if len(data) > _MAX_BYTES:
-        raise ApiError(413, "FILE_TOO_LARGE", "녹음은 200MB 이하만 업로드할 수 있어요.")
-
+    # 상태 검사는 파일 저장 **전에** — 409인 요청이 기존 정상 녹음 파일을 덮어쓰면 안 된다.
     if session.status not in _UPLOADABLE:
         raise ApiError(409, "RECORDING_NOT_ALLOWED",
                        "이미 질의응답이 시작돼 녹음을 올릴 수 없어요.")
 
+    key = storage.recording_key(session.id, ext)
+    try:
+        # 스트리밍 저장 — 200MB 녹음을 통째로 메모리에 올리지 않는다 (OOM → 502 방지)
+        size = storage.save_stream(key, file.file, max_bytes=_MAX_BYTES)
+    except storage.EmptyUploadError:
+        raise ApiError(400, "EMPTY_FILE", "빈 파일이에요.")
+    except storage.FileTooLargeError:
+        raise ApiError(413, "FILE_TOO_LARGE", "녹음은 200MB 이하만 업로드할 수 있어요.")
+
     old_key = _store_full_recording(
-        db, session, file=file, data=data, ext=ext, duration_seconds=duration_seconds,
+        db, session, file=file, key=key, size_bytes=size, ext=ext,
+        duration_seconds=duration_seconds,
         started_at=started_at, ended_at=ended_at, total_chunks=None,
     )
     db.commit()
@@ -185,23 +192,23 @@ def upload_recording_chunk(
     청크가 전부 유실돼도 complete의 전체 파일이 안전망이다(②)."""
     ext = _audio_ext(file)
     if ext is None:
-        raise ApiError(415, "UNSUPPORTED_MEDIA", "wav · mp3 · m4a 청크만 업로드할 수 있어요.")
+        raise ApiError(415, "UNSUPPORTED_MEDIA", "wav · mp3 · m4a · webm 청크만 업로드할 수 있어요.")
     if seq < 0:
         raise ApiError(400, "VALIDATION", "seq는 0 이상이어야 해요.")
     if offset_seconds < 0 or overlap_seconds < 0 or duration_seconds <= 0:
         raise ApiError(400, "VALIDATION", "청크 시간 메타데이터가 올바르지 않아요.")
 
-    data = file.file.read()
-    if len(data) == 0:
-        raise ApiError(400, "EMPTY_FILE", "빈 청크예요.")
-    if len(data) > _MAX_BYTES:
-        raise ApiError(413, "FILE_TOO_LARGE", "청크가 너무 커요.")
-
     if session.status not in _CHUNK_ALLOWED:
         raise ApiError(409, "RECORDING_NOT_ALLOWED", "지금은 녹음 청크를 받을 수 없어요.")
 
     key = storage.recording_chunk_key(session.id, seq, ext)
-    storage.save(key, data)  # 같은 seq 재전송 → 같은 키 덮어쓰기
+    try:
+        # 같은 seq 재전송 → 같은 키 덮어쓰기 (스트리밍 저장 — 메모리 적재 없음)
+        storage.save_stream(key, file.file, max_bytes=_MAX_BYTES)
+    except storage.EmptyUploadError:
+        raise ApiError(400, "EMPTY_FILE", "빈 청크예요.")
+    except storage.FileTooLargeError:
+        raise ApiError(413, "FILE_TOO_LARGE", "청크가 너무 커요.")
 
     # 첫 청크가 draft를 recording_in_progress로 전이 (recording/start 미호출 대비)
     if session.status == SessionStatus.draft:
@@ -251,24 +258,29 @@ def complete_recording(
     파일로 재전사한다(안전망 ②) — 즉 청크가 전부 유실돼도 일괄 업로드와 동일 결과."""
     ext = _audio_ext(file)
     if ext is None:
-        raise ApiError(415, "UNSUPPORTED_MEDIA", "mp3 · wav · m4a 파일만 업로드할 수 있어요.")
+        raise ApiError(415, "UNSUPPORTED_MEDIA",
+                       "mp3 · wav · m4a · webm 파일만 업로드할 수 있어요.")
     if duration_seconds < 0 or duration_seconds > _MAX_DURATION:
         raise ApiError(400, "RECORDING_TOO_LONG", "녹음은 60분 이하만 가능해요.")
     if total_chunks < 0:
         raise ApiError(400, "VALIDATION", "total_chunks는 0 이상이어야 해요.")
 
-    data = file.file.read()
-    if len(data) == 0:
-        raise ApiError(400, "EMPTY_FILE", "빈 파일이에요.")
-    if len(data) > _MAX_BYTES:
-        raise ApiError(413, "FILE_TOO_LARGE", "녹음은 200MB 이하만 업로드할 수 있어요.")
-
+    # 상태 검사는 파일 저장 **전에** — 409인 요청이 기존 정상 녹음 파일을 덮어쓰면 안 된다.
     if session.status not in _UPLOADABLE:
         raise ApiError(409, "RECORDING_NOT_ALLOWED",
                        "이미 질의응답이 시작돼 녹음을 올릴 수 없어요.")
 
+    key = storage.recording_key(session.id, ext)
+    try:
+        size = storage.save_stream(key, file.file, max_bytes=_MAX_BYTES)
+    except storage.EmptyUploadError:
+        raise ApiError(400, "EMPTY_FILE", "빈 파일이에요.")
+    except storage.FileTooLargeError:
+        raise ApiError(413, "FILE_TOO_LARGE", "녹음은 200MB 이하만 업로드할 수 있어요.")
+
     old_key = _store_full_recording(
-        db, session, file=file, data=data, ext=ext, duration_seconds=round(duration_seconds),
+        db, session, file=file, key=key, size_bytes=size, ext=ext,
+        duration_seconds=round(duration_seconds),
         started_at=started_at, ended_at=ended_at, total_chunks=total_chunks,
     )
     db.commit()

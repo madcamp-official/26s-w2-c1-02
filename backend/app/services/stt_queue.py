@@ -19,11 +19,8 @@ STT 서버(GPU)는 한 번에 하나만 처리한다. 여러 세션이 동시에
 """
 
 import logging
-import os
 import queue as _queue_mod
-import tempfile
 import threading
-from pathlib import Path
 
 from sqlalchemy import select
 
@@ -32,8 +29,10 @@ from app.db import models
 from app.db.enums import AnswerStatus, AsyncStatus, SessionStatus
 from app.db.session import SessionLocal
 from app.services.stt import (
+    MAX_RECORDING_SECONDS,
     UnsupportedMediaError,
     merge_chunk_segments,
+    probe_duration_seconds,
     transcribe_recording,
 )
 
@@ -48,21 +47,15 @@ _start_lock = threading.Lock()
 # ── STT 잡 (워커가 한 번에 하나씩 실행) ───────────────────────────────
 
 def _transcribe_key(storage_key: str) -> list[dict]:
-    """storage_key의 오디오를 임시파일로 받아 전사한다(청크 병합 아님).
+    """storage_key의 오디오를 로컬 경로 그대로 전사한다(청크 병합 아님).
 
-    발표 전체·청크 하나·complete 폴백이 공유하는 temp-file + ffmpeg 경로.
-    예외(UnsupportedMediaError·SttError·StorageError)는 그대로 올린다 — 호출자가 흡수."""
-    data = storage.load(storage_key)
-    suffix = Path(storage_key).suffix or ".bin"
-    tmp_path: str | None = None
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
-            f.write(data)
-            tmp_path = f.name
-        return transcribe_recording(tmp_path)
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    발표 전체·청크 하나·complete 폴백이 공유한다. 이전엔 bytes 전체를 메모리에
+    올려 임시파일로 복사했지만(60분 녹음 ≈ 115MB), 로컬 스토리지 파일을 ffmpeg에
+    직접 넘기면 복사·메모리 적재가 모두 불필요하다. 재업로드는 os.replace 원자
+    교체라 읽는 중에도 기존 inode가 유지된다.
+    예외(UnsupportedMediaError·SttError·StorageError·FileNotFoundError)는 그대로
+    올린다 — 호출자가 흡수."""
+    return transcribe_recording(storage.local_path(storage_key))
 
 
 def _run_stt(session_id: str) -> None:
@@ -78,6 +71,19 @@ def _run_stt(session_id: str) -> None:
         db.commit()
 
         try:
+            # 파일 모드(§4.3 d3)는 클라이언트가 길이를 몰라 duration_seconds=0으로
+            # 올린다 — 여기서 실측해 리포트 WPM 분모·60분 상한 검증에 쓴다.
+            # (실시간 녹음 모드는 실측값이 이미 있으므로 건너뛴다.)
+            if not recording.duration_seconds:
+                duration = probe_duration_seconds(storage.local_path(recording.storage_key))
+                if duration > MAX_RECORDING_SECONDS:
+                    _fail(db, transcript, session_id, "RECORDING_TOO_LONG",
+                          f"녹음이 60분을 넘어요({int(duration // 60)}분). "
+                          "60분 이하 파일로 다시 올려주세요.")
+                    return
+                recording.duration_seconds = max(1, round(duration))
+                db.commit()
+
             segments = _transcribe_key(recording.storage_key)
         except UnsupportedMediaError as e:
             _fail(db, transcript, session_id, "UNSUPPORTED_MEDIA", str(e))
