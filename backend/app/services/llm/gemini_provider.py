@@ -21,6 +21,7 @@ import logging
 from typing import TypeVar
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
 
@@ -33,6 +34,10 @@ from app.services.llm.base import MAX_FOLLOW_UP_DEPTH, LLMProvider, build_type_s
 logger = logging.getLogger("rehearsal.llm.gemini")
 
 _SchemaT = TypeVar("_SchemaT", bound=BaseModel)
+
+# 모델·키 폴백에서 제외할 오류 분류 (_generate 참고).
+_NO_FALLBACK_CODES = frozenset({400, 413, 422})  # 요청 결함 — 폴백해도 동일 실패, 즉시 raise
+_KEY_LEVEL_CODES = frozenset({401, 403})         # 키 결함 — 이 키의 다른 모델도 무의미
 
 # 프롬프트에 넣는 텍스트 상한(대략 토큰 폭주 방지용).
 _SLIDES_CHAR_LIMIT = 15_000
@@ -153,11 +158,24 @@ class GeminiLLMProvider(LLMProvider):
                 exp_base=2,
                 jitter=1,
             )
-        self._client = genai.Client(
-            vertexai=settings.gemini_use_vertex, api_key=key,
-            http_options=http_options,
-        )
-        self._model = settings.gemini_model
+        # 키는 (주, 예비) 순서 — 예비 키는 다른 GCP 프로젝트 발급분이라 쿼터 버킷이
+        # 완전히 분리된다(쿼터는 키가 아닌 프로젝트×모델 단위). _generate가 주 키의
+        # 모든 모델을 소진한 뒤에만 예비 키로 넘어간다.
+        keys = [("primary", key)]
+        if settings.gemini_api_key_backup:
+            keys.append(("backup", settings.gemini_api_key_backup))
+        self._clients = [
+            (label, genai.Client(
+                vertexai=settings.gemini_use_vertex, api_key=k,
+                http_options=http_options,
+            ))
+            for label, k in keys
+        ]
+        # 시도 순서: 기본 모델 → 폴백 모델들. 무료 일일 쿼터가 모델별 버킷이라
+        # 한 모델이 429로 소진돼도 다음 모델은 살아 있다 (dict.fromkeys로 중복 제거).
+        self._models = list(dict.fromkeys(
+            [settings.gemini_model, *settings.gemini_fallback_model_list]
+        ))
 
     async def generate_questions(
         self,
@@ -343,23 +361,53 @@ class GeminiLLMProvider(LLMProvider):
     ) -> _SchemaT:
         # system_instruction = 캐시 가능한 공통 프리픽스, contents = 매번 바뀌는 값.
         #
-        # 동기 클라이언트(self._client.models)를 asyncio.to_thread로 호출한다 — .aio(비동기)
+        # 동기 클라이언트(client.models)를 asyncio.to_thread로 호출한다 — .aio(비동기)
         # 클라이언트는 내부 httpx 전송을 '처음 쓴 이벤트 루프'에 묶는데, 백그라운드 잡들이
         # 매 호출 asyncio.run()으로 새 루프를 열고 닫는다(run_generate·STT 워커의 follow_up).
         # 그래서 두 번째 호출부터 'Event loop is closed'로 꼬리질문 생성이 깨졌다. 동기
         # 클라이언트는 루프에 묶이지 않는 httpx.Client라 스레드·루프를 넘나들어 재사용해도 안전.
-        response = await asyncio.to_thread(
-            self._client.models.generate_content,
-            model=self._model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=_SYSTEM_INSTRUCTION,
-                response_mime_type="application/json",
-                response_schema=schema,
-                temperature=temperature,
-            ),
+        #
+        # 폴백: 키(주→예비) × 모델(기본→폴백) 순서로 시도한다. 무료 티어 일일 쿼터가
+        # 프로젝트×모델 버킷이라, 한 조합이 429로 소진돼도 다음 조합은 살아 있다
+        # (2026-07-15 장애: 3.5-flash 20 RPD 소진 + 고수요 503/499 연쇄). SDK 내부
+        # 재시도(gemini_max_attempts)가 한 조합 안의 순간 스파이크를 먼저 흡수하고,
+        # 그래도 죽으면 여기서 다음 조합으로 넘어간다.
+        config = types.GenerateContentConfig(
+            system_instruction=_SYSTEM_INSTRUCTION,
+            response_mime_type="application/json",
+            response_schema=schema,
+            temperature=temperature,
         )
-        if isinstance(response.parsed, schema):
-            return response.parsed
-        # SDK 파싱이 비어 오는 경우(드묾) 텍스트에서 직접 복원.
-        return schema.model_validate(json.loads(response.text or ""))
+        last_exc: Exception | None = None
+        for key_label, client in self._clients:
+            for model in self._models:
+                try:
+                    response = await asyncio.to_thread(
+                        client.models.generate_content,
+                        model=model, contents=prompt, config=config,
+                    )
+                except genai_errors.APIError as e:
+                    last_exc = e
+                    if e.code in _NO_FALLBACK_CODES:
+                        raise  # 요청 자체 결함 — 다른 모델·키로 가도 똑같이 실패
+                    if e.code in _KEY_LEVEL_CODES:
+                        logger.warning(
+                            "Gemini %s 키 사용 불가(%s) — 나머지 모델 건너뛰고 다음 키로",
+                            key_label, e.code)
+                        break
+                    logger.warning(
+                        "Gemini 폴백: %s/%s 실패(%s) — 다음 조합 시도", key_label, model, e.code)
+                    continue
+                except Exception as e:  # httpx 타임아웃 등 전송 계층 오류
+                    last_exc = e
+                    logger.warning(
+                        "Gemini 폴백: %s/%s 전송 오류(%r) — 다음 조합 시도", key_label, model, e)
+                    continue
+                if model != self._models[0] or key_label != "primary":
+                    logger.info("Gemini 폴백 성공: %s/%s", key_label, model)
+                if isinstance(response.parsed, schema):
+                    return response.parsed
+                # SDK 파싱이 비어 오는 경우(드묾) 텍스트에서 직접 복원.
+                return schema.model_validate(json.loads(response.text or ""))
+        assert last_exc is not None  # clients·models 둘 다 최소 1개라 여기 오면 항상 예외 존재
+        raise last_exc

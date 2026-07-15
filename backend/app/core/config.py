@@ -59,10 +59,21 @@ class Settings(BaseSettings):
     # 생성이 곧장 failed로 떨어져 사용자가 '다시 생성'을 반복해야 했다(2026-07-15 장애).
     # 1보다 크면 지수 백오프+지터로 자동 재시도해 이런 일시 스파이크를 흡수한다.
     gemini_max_attempts: int = 4
+    # 기본 모델이 429(무료 일일 쿼터 소진)·503(고수요) 등으로 막혔을 때 순서대로 시도할
+    # 예비 모델(쉼표 구분). 무료 티어 일일 쿼터는 프로젝트×모델 버킷이라 모델마다 별도 —
+    # 2026-07-15 장애: gemini-3.5-flash 20 RPD 소진으로 꼬리질문·리포트가 전부 실패.
+    gemini_fallback_models: str = "gemini-flash-latest,gemini-2.5-flash-lite,gemini-2.5-flash"
+    # 예비 API 키 — 반드시 **다른 GCP 프로젝트**에서 발급된 키여야 의미가 있다(쿼터는
+    # 키가 아니라 프로젝트 단위). 주 키의 모든 모델이 막혔을 때만 사용된다.
+    gemini_api_key_backup: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def gemini_fallback_model_list(self) -> list[str]:
+        return [m.strip() for m in self.gemini_fallback_models.split(",") if m.strip()]
 
 
 settings = Settings()
