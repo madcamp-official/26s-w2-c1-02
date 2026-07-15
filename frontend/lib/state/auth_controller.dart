@@ -11,10 +11,32 @@ class AuthController extends ChangeNotifier {
 
   AppUser? _user;
   bool _loading = false;
+  bool _booting = true;
 
   AppUser? get user => _user;
   bool get isLoggedIn => _user != null;
   bool get loading => _loading;
+
+  /// 앱 시작 직후 세션 복원이 아직 진행 중인지. true인 동안 라우터는
+  /// 로그인 판단을 미루고 스플래시를 보여줘야 한다 ([restoreSession] 참고).
+  bool get booting => _booting;
+
+  /// 앱 시작 시 1회 호출 — 저장된 세션(Web=httpOnly 쿠키)으로 로그인 상태를
+  /// 되살린다. 새로고침으로 메모리의 access 토큰이 사라져도 여기서 복구한다.
+  ///
+  /// 성공하면 사용자 정보를 채워 로그인 상태를 유지하고, 실패(쿠키 없음·만료)하면
+  /// 로그아웃 상태로 둔다. 어느 쪽이든 끝나면 [booting]을 false로 내린다.
+  Future<void> restoreSession() async {
+    try {
+      final restored = await _repo.restoreSession();
+      if (restored) _user = await _repo.me();
+    } catch (_) {
+      _user = null;
+    } finally {
+      _booting = false;
+      notifyListeners();
+    }
+  }
 
   Future<void> login({required String username, required String password}) =>
       _guard(() async {
