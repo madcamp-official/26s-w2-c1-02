@@ -85,7 +85,12 @@ if $FORCE_FRONT || echo "$CHANGED" | grep -q '^frontend/'; then
   else
     rm -rf "$WEB_ROOT"/* && cp -r "$REPO/frontend/build/web/." "$WEB_ROOT/"
   fi
-  echo "  → $WEB_ROOT 배포 완료 (nginx는 정적 파일이라 재시작 불필요)"
+  # Cloudflare가 .js를 4시간 엣지 캐시 + 브라우저 max-age 강제하므로
+  # 커밋 해시를 쿼리스트링으로 붙여 배포마다 URL을 바꾼다 (index.html은 no-cache라 항상 신선).
+  BUILD_V=$(git rev-parse --short HEAD)
+  sed -i "s|src=\"flutter_bootstrap\.js\"|src=\"flutter_bootstrap.js?v=$BUILD_V\"|" "$WEB_ROOT/index.html"
+  sed -i "s|\"main\.dart\.js\"|\"main.dart.js?v=$BUILD_V\"|g" "$WEB_ROOT/flutter_bootstrap.js"
+  echo "  → $WEB_ROOT 배포 완료 (캐시버스트 v=$BUILD_V, nginx는 정적 파일이라 재시작 불필요)"
 else
   echo "▶ 프론트 변경 없음 — 빌드 생략 (강제: --front)"
 fi
