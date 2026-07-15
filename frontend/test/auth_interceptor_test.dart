@@ -17,8 +17,9 @@ void main() {
     expect(tokens.accessToken, isNotEmpty);
     expect(api.tokenStore.accessToken, tokens.accessToken);
 
+    // /auth/me는 user 래핑 없이 평평한 형태 (실서버 계약과 동일).
     final me = await api.get('/auth/me') as Map<String, dynamic>;
-    expect((me['user'] as Map)['username'], 'junseo');
+    expect(me['username'], 'junseo');
   });
 
   test('Native: 401 TOKEN_EXPIRED → refresh(본문 토큰) → 원요청 자동 재시도', () async {
@@ -65,9 +66,9 @@ void main() {
     expect(ok, isTrue); // 복원 성공
     expect(api.tokenStore.accessToken, isNotNull); // 새 access 발급됨
 
-    // 복원된 토큰으로 인증 API가 곧바로 동작한다.
+    // 복원된 토큰으로 인증 API가 곧바로 동작한다 (평평한 응답 형태).
     final me = await api.get('/auth/me') as Map<String, dynamic>;
-    expect((me['user'] as Map)['username'], isNotEmpty);
+    expect(me['username'], isNotEmpty);
   });
 
   test('유효하지 않은 토큰(만료 아님)은 재시도 없이 세션 종료 통지', () async {

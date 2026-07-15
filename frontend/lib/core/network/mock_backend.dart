@@ -148,7 +148,8 @@ class MockBackend implements HttpBackend {
     if (auth != null) return auth;
 
     if (m == 'POST' && path == '/auth/logout') return _logout(r);
-    if (m == 'GET' && path == '/auth/me') return _ok({'user': _me});
+    // 실서버(auth.py /me)와 동일하게 user 래핑 없이 평평한 형태로 반환.
+    if (m == 'GET' && path == '/auth/me') return _ok(_me);
 
     // users
     if (path == '/users/me') {

@@ -56,9 +56,11 @@ class AuthRepository {
         'new_password': newPassword,
       });
 
+  /// 현재 유저 조회 — 응답은 user 래핑 없이 평평한 형태 (backend /auth/me,
+  /// test_auth_me.py 계약: {id, name, username, email}).
   Future<AppUser> me() async {
     final json = await _api.get('/auth/me') as Map<String, dynamic>;
-    return AppUser.fromJson(json['user'] as Map<String, dynamic>);
+    return AppUser.fromJson(json);
   }
 
   /// 앱 시작 시 저장된 세션으로 로그인 상태를 복원한다 (새로고침 후 유지).
