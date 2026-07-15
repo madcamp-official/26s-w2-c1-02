@@ -9,6 +9,8 @@ import 'package:provider/provider.dart';
 import '../../core/audio/pcm_chunker.dart';
 import '../../core/audio/recorder_service.dart';
 import '../../core/theme/app_colors.dart';
+import '../../data/models/enums.dart';
+import '../../data/models/material_info.dart';
 import '../../data/models/session.dart';
 import '../../data/repositories/session_repository.dart';
 import '../../state/session_controller.dart';
@@ -43,6 +45,9 @@ class _PresentingPageState extends State<PresentingPage> {
   Timer? _timer;
   int _elapsedSeconds = 0;
   int _slide = 1;
+  // 발표 자료가 파싱됐다면 그 슬라이드들 — 발표 중 넘겨 보며 말할 수 있게 한다.
+  // 비어 있으면(자료 없음·파싱 실패) 슬라이드 뷰어를 숨긴다.
+  List<SlidePage> _slides = const [];
   DateTime? _startedAt;
   DateTime? _endedAt; // 녹음 정지 시점 (업로드 재시도에도 종료 시각 고정)
   bool _finishing = false;
@@ -63,7 +68,29 @@ class _PresentingPageState extends State<PresentingPage> {
         ctrl.byId(widget.sessionId) ?? await ctrl.refresh(widget.sessionId);
     if (!mounted) return;
     setState(() => _session = session);
+    unawaited(_loadSlides()); // 자료 파싱 결과를 병렬로 당겨온다(녹음 시작을 막지 않음)
     await _startRecording(context.read<RecorderService>());
+  }
+
+  /// 발표 자료 슬라이드를 불러온다. "파싱은 두고 발표 시작"으로 넘어온 경우
+  /// 아직 처리 중일 수 있어 ready|failed가 될 때까지 몇 번 폴링한다.
+  /// 자료가 없으면(404) 조용히 건너뛴다 — 슬라이드 뷰어는 그냥 숨는다.
+  Future<void> _loadSlides() async {
+    final repo = context.read<SessionRepository>();
+    for (var attempt = 0; attempt < 15; attempt++) {
+      if (!mounted) return;
+      try {
+        final m = await repo.getMaterial(widget.sessionId);
+        if (m.status == AsyncStatus.ready) {
+          if (mounted && m.slides.isNotEmpty) setState(() => _slides = m.slides);
+          return;
+        }
+        if (m.status == AsyncStatus.failed) return; // 파싱 실패 — 보여줄 게 없음
+      } catch (_) {
+        return; // MATERIAL_NOT_FOUND 등 — 자료 없이 발표
+      }
+      await Future.delayed(const Duration(seconds: 2));
+    }
   }
 
   Future<void> _startRecording(RecorderService recorder) async {
@@ -213,43 +240,11 @@ class _PresentingPageState extends State<PresentingPage> {
         const Spacer(),
         Text(title,
             style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-        const SizedBox(height: 20),
-        AspectRatio(
-          aspectRatio: 16 / 10,
-          child: Container(
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            alignment: Alignment.center,
-            child: Text('슬라이드 ($_slide)',
-                style: const TextStyle(color: AppColors.textSecondary)),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: TextButton(
-                style: TextButton.styleFrom(
-                    backgroundColor: AppColors.surface,
-                    foregroundColor: AppColors.textPrimary),
-                onPressed: _slide > 1 ? () => setState(() => _slide--) : null,
-                child: const Text('이전 슬라이드'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextButton(
-                style: TextButton.styleFrom(
-                    backgroundColor: AppColors.surface,
-                    foregroundColor: AppColors.textPrimary),
-                onPressed: () => setState(() => _slide++),
-                child: const Text('다음 슬라이드'),
-              ),
-            ),
-          ],
-        ),
+        // 자료가 파싱된 경우에만 슬라이드 뷰어를 보여준다(자료 없이도 발표는 가능).
+        if (_slides.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          _slideViewer(),
+        ],
         const SizedBox(height: 28),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -289,6 +284,70 @@ class _PresentingPageState extends State<PresentingPage> {
           ),
         ),
         const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  /// 발표 자료 슬라이드 뷰어 — 현재 슬라이드(그 위)를 크게 보여주고,
+  /// 아래 이전/다음 버튼으로 넘긴다. _slides.isNotEmpty일 때만 호출된다.
+  Widget _slideViewer() {
+    final total = _slides.length;
+    final current = _slide.clamp(1, total);
+    final slide = _slides[current - 1];
+    return Column(
+      children: [
+        // 현재 슬라이드 표시 (버튼 위)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Text('슬라이드 $current / $total',
+              style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textSecondary)),
+        ),
+        AspectRatio(
+          aspectRatio: 16 / 10,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.topLeft,
+            child: SingleChildScrollView(
+              child: Text(
+                slide.text.trim().isEmpty ? '(빈 슬라이드)' : slide.text,
+                style: const TextStyle(
+                    fontSize: 15, height: 1.4, color: AppColors.textPrimary),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextButton(
+                style: TextButton.styleFrom(
+                    backgroundColor: AppColors.surface,
+                    foregroundColor: AppColors.textPrimary),
+                onPressed: current > 1 ? () => setState(() => _slide = current - 1) : null,
+                child: const Text('이전 슬라이드'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextButton(
+                style: TextButton.styleFrom(
+                    backgroundColor: AppColors.surface,
+                    foregroundColor: AppColors.textPrimary),
+                onPressed:
+                    current < total ? () => setState(() => _slide = current + 1) : null,
+                child: const Text('다음 슬라이드'),
+              ),
+            ),
+          ],
+        ),
       ],
     );
   }

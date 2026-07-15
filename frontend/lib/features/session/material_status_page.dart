@@ -157,7 +157,7 @@ class _StatusCard extends StatelessWidget {
               backgroundColor: Color(0xFFE6F9F1),
               child: Icon(Icons.check, size: 18, color: Color(0xFF00915A))),
           title: '추출 완료',
-          subtitle: '${info.pageCount ?? info.slides.length}개 슬라이드 · slides.json 생성됨',
+          subtitle: '${info.pageCount ?? info.slides.length}개 슬라이드',
         );
       case AsyncStatus.failed:
         return _card(
