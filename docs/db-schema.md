@@ -24,130 +24,28 @@
 
 ```mermaid
 erDiagram
-    users ||--o{ social_accounts : "소셜 연결"
-    users ||--o{ refresh_tokens : "로그인 세션"
-    users ||--o{ email_verifications : "인증 코드"
-    users ||--o{ team_members : "소속"
-    teams ||--o{ team_members : "구성원"
-    teams ||--o{ team_email_invites : "이메일 초대"
-    teams ||--o| team_invite_links : "활성 링크(≤1)"
-    teams ||--o{ sessions : "발표 세션"
-    users ||--o{ sessions : "owner(발표자)"
-    sessions ||--o| materials : "자료 PDF·PPTX(≤1)"
-    sessions ||--o| recordings : "발표 녹음(≤1)"
-    sessions ||--o| transcripts : "전사(≤1)"
-    sessions ||--o{ questions : "질문"
-    questions ||--o| questions : "꼬리질문(≤1)"
-    questions ||--o| answers : "답변(≤1)"
-    sessions ||--o| reports : "리포트(≤1)"
-    reports ||--o{ report_type_scores : "전략별 점수"
-
+    %% ===== 유저 · 인증 =====
     users {
         text id PK "usr_"
-        text username "UK·소셜전용은 NULL"
-        text password_hash "소셜전용은 NULL"
-        text name "닉네임·탈퇴시 NULL"
-        text email "UK·탈퇴시 NULL"
+        text username UK "소셜 전용은 NULL"
+        text password_hash
+        text name "탈퇴 시 NULL"
+        text email UK
         timestamptz email_verified_at
-        timestamptz deleted_at "익명화 마커"
-    }
-    teams {
-        text id PK "team_"
-        text name "중복 허용·≤20자"
-        text leader_id FK "→users·멤버여야 함"
-    }
-    team_members {
-        text team_id PK,FK
-        text user_id PK,FK
-        timestamptz joined_at "승계 순서 기준"
-    }
-    sessions {
-        text id PK "ses_"
-        text team_id FK
-        text owner_id FK "발표자·성장리포트 축"
-        session_status status
-        session_mode mode
-        questioner_persona__ personas "enum[]·≥1"
-        smallint question_count "1차 질문 수"
-        smallint time_limit_minutes
-        text current_question_id FK "deferred"
-        ended_reason qna_ended_reason
-    }
-    materials {
-        text session_id PK,FK
-        async_status status
-        real progress
-        text storage_key "오브젝트 스토리지"
-        jsonb slides "[{page,text}]"
-    }
-    recordings {
-        text session_id PK,FK
-        async_status status
-        text storage_key
-        int duration_seconds
-    }
-    transcripts {
-        text session_id PK,FK
-        async_status status
-        jsonb segments "[{start,end,text}] 초 단위"
-    }
-    questions {
-        text id PK "q_"
-        text session_id FK
-        text parent_id FK "꼬리질문·부모당 1개"
-        smallint follow_up_depth "0|1"
-        smallint order_index "1차 순번"
-        questioner_persona persona
-        question_strategy strategy
-        text text
-        jsonb evidence "{slides,transcript_refs}"
-        async_status tts_status
-        text tts_storage_key
-    }
-    answers {
-        text question_id PK,FK
-        answer_kind kind "answered|passed"
-        answer_status status
-        text audio_storage_key
-        text text "raw STT(v0.3)"
-        follow_up_status follow_up_status
-    }
-    reports {
-        text session_id PK,FK
-        async_status status
-        text insight
-        real words_per_minute
-        jsonb filler_words "[{word,count}]"
-    }
-    report_type_scores {
-        text report_session_id PK,FK
-        question_strategy strategy PK
-        real score "0.0~1.0"
-    }
-    team_email_invites {
-        text id PK "inv_"
-        text team_id FK
-        text email "pending 중복금지"
-        text token UK
-        invite_status status
-    }
-    team_invite_links {
-        text id PK "lnk_"
-        text team_id FK "활성 1개(부분UK)"
-        text token UK
-        timestamptz revoked_at
+        timestamptz deleted_at "탈퇴=익명화"
     }
     social_accounts {
-        text id PK "soc_"
+        text id PK "soc_ (현재 소셜로그인 미구현)"
         text user_id FK
-        social_provider provider "UK(provider,puid)"
-        text provider_user_id
+        social_provider provider "google|kakao|naver"
+        text provider_user_id UK
     }
     refresh_tokens {
         text id PK "rt_"
         text user_id FK
-        text token_hash UK "원문 저장 금지"
-        client_platform platform
+        text token_hash UK "SHA-256"
+        client_platform platform "web|ios|android"
+        timestamptz expires_at
         timestamptz revoked_at
     }
     email_verifications {
@@ -156,7 +54,148 @@ erDiagram
         text code_hash
         timestamptz expires_at
         timestamptz consumed_at
+        smallint attempt_count
     }
+    password_resets {
+        text id PK "pwr_ (003)"
+        text user_id FK
+        text code_hash "bcrypt"
+        timestamptz expires_at
+        timestamptz consumed_at
+        smallint attempt_count
+    }
+
+    %% ===== 팀 · 초대 =====
+    teams {
+        text id PK "team_"
+        text name "1~20자"
+        text leader_id FK "팀장은 반드시 멤버"
+    }
+    team_members {
+        text team_id PK,FK
+        text user_id PK,FK
+        timestamptz joined_at "승계 순서 기준"
+    }
+    team_email_invites {
+        text id PK "inv_"
+        text team_id FK
+        text email "팀+이메일 pending 유니크"
+        text token UK
+        text invited_by FK
+        invite_status status
+        timestamptz expires_at
+    }
+    team_invite_links {
+        text id PK "lnk_"
+        text team_id FK "팀당 활성 1개"
+        text token UK
+        text created_by FK
+        timestamptz revoked_at
+    }
+
+    %% ===== 세션 (발표 1회) =====
+    sessions {
+        text id PK "ses_"
+        text team_id FK
+        text owner_id FK "발표자"
+        text name
+        session_status status "draft~completed|failed"
+        session_mode mode "realtime|upload"
+        questioner_persona_arr personas "5종 배열"
+        smallint question_count "1~20"
+        smallint time_limit_minutes "1~120"
+        text current_question_id FK "순환 FK"
+        ended_reason qna_ended_reason
+    }
+
+    %% ===== 세션 1:1 자식 =====
+    materials {
+        text session_id PK,FK
+        async_status status
+        real progress
+        text storage_key "본문은 디스크"
+        jsonb slides "페이지별 텍스트"
+    }
+    recordings {
+        text session_id PK,FK
+        async_status status
+        text storage_key
+        integer duration_seconds "최대 3600"
+        integer total_chunks "002에서 추가"
+    }
+    recording_chunks {
+        text session_id PK,FK "002"
+        integer seq PK "0-base"
+        real offset_seconds
+        real overlap_seconds "앞겹침 4s"
+        text storage_key
+        async_status status "청크별 STT"
+        jsonb segments "청크-로컬 ts"
+    }
+    transcripts {
+        text session_id PK,FK
+        async_status status
+        jsonb segments "start·end·text"
+    }
+
+    %% ===== 질문 · 답변 =====
+    questions {
+        text id PK "q_"
+        text session_id FK
+        text parent_id FK "꼬리질문, 깊이 1"
+        smallint order_index
+        questioner_persona persona
+        question_strategy strategy "4종"
+        text text
+        jsonb evidence "slides+transcript_refs"
+        async_status tts_status
+        text tts_storage_key
+    }
+    answers {
+        text question_id PK,FK "질문당 1개"
+        answer_kind kind "answered|passed"
+        answer_status status
+        text audio_storage_key
+        text text "raw STT"
+        follow_up_status follow_up_status
+    }
+
+    %% ===== 리포트 =====
+    reports {
+        text session_id PK,FK
+        async_status status "qna/end 시 자동"
+        real words_per_minute
+        jsonb filler_words
+        text insight
+    }
+    report_type_scores {
+        text report_session_id PK,FK
+        question_strategy strategy PK
+        real score "0~1"
+    }
+
+    %% ===== 관계 =====
+    users ||--o{ social_accounts : ""
+    users ||--o{ refresh_tokens : ""
+    users ||--o{ email_verifications : ""
+    users ||--o{ password_resets : ""
+    users ||--o{ teams : "leader_id"
+    teams ||--|{ team_members : ""
+    users ||--o{ team_members : ""
+    teams ||--o{ team_email_invites : ""
+    teams ||--o{ team_invite_links : ""
+    teams ||--o{ sessions : ""
+    users ||--o{ sessions : "owner_id"
+    sessions ||--o| materials : "1:1"
+    sessions ||--o| recordings : "1:1"
+    sessions ||--o| transcripts : "1:1"
+    sessions ||--o| reports : "1:1"
+    sessions ||--o{ recording_chunks : ""
+    sessions ||--o{ questions : ""
+    sessions |o--o| questions : "current_question_id"
+    questions |o--o| questions : "꼬리질문 parent_id"
+    questions ||--o| answers : "1:1"
+    reports ||--o{ report_type_scores : "전략별 점수"
 ```
 
 ---

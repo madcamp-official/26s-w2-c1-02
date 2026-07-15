@@ -86,7 +86,8 @@ AI 청중과 실시간 음성으로 대화하는 발표 리허설 서비스. 사
 | AI 페르소나 질문 생성 + 근거 표시 | 5종 페르소나 · 4종 전략, 근거(슬라이드·전사 ts), 질의 수 균등 랜덤 배분 | 필수 |
 | 발표 세션 기록 & 분석·성장 리포트 | 세션 영속화, 전략별 답변 점수·WPM·필러워드, 회차 비교 성장 리포트 | 필수 |
 | 인증·팀·세션 관리 | JWT(Web 쿠키 / Native 본문), 팀·초대·승계, 세션 CRUD·상태머신 | 필수 |
-| 소셜 로그인 (구글 1종) | Google OAuth 연동. 카카오/네이버는 자리만, 이메일 인증은 코드 저장만(발송 생략) | 선택 |
+| 이메일 인증·계정 복구 | 이메일 인증 **SMTP 실발송까지 구현**(개발 시 mock 모드는 로그 출력), 아이디 찾기·비밀번호 재설정 구현 | 필수 |
+| ~~소셜 로그인 (구글 1종)~~ | **미구현** — Mock 엔드포인트만 존재(카카오/네이버 포함). 인증은 이메일 회원가입·로그인으로 일원화 | 제외 |
 | 실시간 진행률 (SSE/WebSocket) | 질문 생성·TTS 대기 등 진행률 push. 미도입 시 폴링 폴백 유지 | 선택 |
 | ~~실존 인물 목소리 클로닝 (Qwen3-TTS)~~ | 이번 범위에서 **제외 확정**. TTS는 VoxCPM2 페르소나 음성으로 일원화 | 제외 |
 
@@ -115,7 +116,7 @@ flowchart TD
     end
 
     BE -->|질문·꼬리질문·리포트| GEM[Google Gemini 2.5 API]
-    BE -->|인증| OAUTH[Google OAuth]
+    BE -->|인증·재설정 코드 발송| SMTP[Gmail SMTP]
 
     subgraph GPU["GPU 서버 (RTX 3090 24GB)"]
         TTS[TTS · VoxCPM2<br/>:8100 /v1/audio/speech]
@@ -164,11 +165,11 @@ flowchart TD
 
 | Method / 방식 | Endpoint / 서비스 | 설명 | 요청 | 응답 | 비고 |
 |---|---|---|---|---|---|
-| REST | `/auth/*` | 회원가입·로그인·refresh·소셜(구글) | `{username,password}` 등 | 토큰 + 유저 | Web=httpOnly 쿠키 / Native=본문 (`X-Client-Platform`) |
+| REST | `/auth/*` | 회원가입·로그인·refresh·이메일 인증·아이디 찾기·비밀번호 재설정 | `{username,password}` 등 | 토큰 + 유저 | Web=httpOnly 쿠키 / Native=본문 (`X-Client-Platform`) |
 | REST | `/teams/*`, `/invites/*` | 팀·멤버·초대(이메일/링크)·승계 | `{name}`, `{email}` 등 | 팀·초대 리소스 | 팀장 승계 트랜잭션 |
 | REST | `/sessions/*` | 세션·자료·녹음·전사·Q&A·리포트 | multipart(PDF·PPTX/오디오) 등 | 상태 필드 + 결과 | 무거운 작업 `202` + 폴링 |
 | 외부 API | Google Gemini 2.5 | 질문·꼬리질문·리포트 생성 | 슬라이드+전사+페르소나 프롬프트 | JSON(질문·evidence·점수) | `LLMProvider` 추상화 뒤에 연결 |
-| 외부 API | Google OAuth | 소셜 로그인(구글 1종) | `{id_token}` | 유저 세션 | 카카오/네이버는 자리만 |
+| 외부 SMTP | Gmail SMTP (STARTTLS :587) | 이메일 인증·비밀번호 재설정 코드 발송 | 인증 코드 메일 | — | `EMAIL_PROVIDER=mock`이면 발송 대신 서버 로그 출력 |
 | 내부 HTTP | GPU `:8100` `/v1/audio/speech` | TTS (VoxCPM2, 페르소나 음성) | `{input, voice}` | 오디오(wav/mp3) | OpenAI 호환 포맷 |
 | 내부 HTTP | GPU `:8200` `/transcribe` | STT (Qwen3-ASR + ForcedAligner) | 오디오 청크 | `{segments:[{text,start,end}]}` | 녹음 중 1분 청크·직렬 처리 (5분 = ForcedAligner 상한) |
 
@@ -210,7 +211,7 @@ bash setup_tts.sh && bash setup_stt.sh   # 이후 start_tts.sh / start_stt.sh
 | 핵심 기술 | Flutter(크로스플랫폼 UI), FastAPI(Python), Google Gemini 2.5(질문·리포트), VoxCPM2(TTS), Qwen3-ASR + ForcedAligner(STT) |
 | 실행 환경 | KCLOUD VM(백엔드) + Cloudflare Tunnel, GPU 서버(RTX 3090 24GB), Flutter Web / iOS / Android |
 | 데이터 저장 | PostgreSQL 16(16테이블 · ENUM 12종 · JSONB), 파일 = VM 로컬 디스크 + 서명 URL(보관 무기한) |
-| 외부 API / 서비스 | Google Gemini 2.5 API, Google OAuth |
+| 외부 API / 서비스 | Google Gemini 2.5 API, Gmail SMTP(이메일 인증·비밀번호 재설정) |
 | 기타 | JWT 인증(Web 쿠키 / Native 본문), 비동기 `202` + 폴링, 레이트리밋은 시연 시 IP 기준 최소 방어만 |
 
 ---
