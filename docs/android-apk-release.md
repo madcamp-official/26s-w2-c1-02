@@ -4,7 +4,7 @@
 
 - **대상 독자**: APK 를 빌드할 **Flutter 개발 머신 담당자** (필수), 그리고 나중에 도메인에서 다운로드로 배포하고 싶을 때의 **서버 담당자** (선택).
 - **전제**: 앱 코드에는 이미 서명·빌드 설정이 반영되어 있음(커밋 `d226b8c`). 이 문서의 명령들은 **Flutter·Android SDK 가 설치된 개발 머신**에서 실행한다. GPU 서버(`camp-2`)에는 안드로이드 툴체인이 없어 빌드 불가.
-- **백엔드**: 앱은 빌드 시 `https://malggori.madcamp-kaist.org` 를 API 주소로 박아 넣는다(`build-apk.sh` 에 반영됨).
+- **백엔드**: 앱은 빌드 시 `https://horsetail.madcamp-kaist.org` 를 API 주소로 박아 넣는다(`build-apk.sh` 에 반영됨).
 
 ---
 
@@ -87,14 +87,14 @@ cd frontend
 ## C. (선택) 서버 담당자 — 도메인에서 다운로드로 배포하고 싶을 때만
 
 현재는 파일 직접 전달 방식이라 **서버 작업은 필요 없다.**
-나중에 `https://malggori.madcamp-kaist.org` 에서 APK 를 내려받게 하고 싶다면:
+나중에 `https://horsetail.madcamp-kaist.org` 에서 APK 를 내려받게 하고 싶다면:
 
 ```bash
 # Flutter 담당자가 만든 app-release.apk 를 nginx 웹 루트로 복사
 sudo cp app-release.apk /var/www/rehearsal/malggori.apk
 ```
 
-그러면 `https://malggori.madcamp-kaist.org/malggori.apk` 로 다운로드 가능.
+그러면 `https://horsetail.madcamp-kaist.org/malggori.apk` 로 다운로드 가능.
 
 nginx 가 파일을 열어버리지 않고 다운로드하도록, APK MIME 타입을 확인/추가:
 

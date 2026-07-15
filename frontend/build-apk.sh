@@ -14,7 +14,7 @@ cd "$(dirname "$0")"
 
 flutter build apk --release \
   --dart-define=USE_MOCK=false \
-  --dart-define=API_BASE_URL=https://malggori.madcamp-kaist.org
+  --dart-define=API_BASE_URL=https://horsetail.madcamp-kaist.org
 
 echo
 echo "✅ 빌드 완료: build/app/outputs/flutter-apk/app-release.apk"

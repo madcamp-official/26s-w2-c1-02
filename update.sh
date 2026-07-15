@@ -24,7 +24,7 @@ FLUTTER=/opt/flutter/bin/flutter
 HEALTH_URL=http://127.0.0.1:8000/health
 # 배포 중인 웹 빌드와 동일한 정의 (main.dart.js에서 역추적해 고정)
 DART_DEFINES=(--dart-define=USE_MOCK=false
-              --dart-define=API_BASE_URL=https://malggori.madcamp-kaist.org)
+              --dart-define=API_BASE_URL=https://horsetail.madcamp-kaist.org)
 
 FORCE_BACK=false
 FORCE_FRONT=false
@@ -96,4 +96,4 @@ else
 fi
 
 echo ""
-echo "✅ 업데이트 완료 — https://malggori.madcamp-kaist.org 에서 확인"
+echo "✅ 업데이트 완료 — https://horsetail.madcamp-kaist.org 에서 확인"
