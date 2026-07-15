@@ -7,6 +7,7 @@ import '../../core/theme/app_colors.dart';
 import '../../data/models/team.dart';
 import '../../data/repositories/team_repository.dart';
 import '../../state/auth_controller.dart';
+import '../../state/team_controller.dart';
 import '../common/responsive_page.dart';
 
 /// 초대 수락 (와이어프레임 c2).
@@ -110,7 +111,11 @@ class InviteAcceptPage extends StatelessWidget {
                           context.go('/login');
                           return;
                         }
+                        final teams = context.read<TeamController>();
                         await repo.acceptInvite(token);
+                        // go('/')는 스택에 이미 있는 홈 인스턴스로 돌아가므로
+                        // initState의 load()가 다시 돌지 않는다 — 여기서 갱신.
+                        await teams.load();
                         if (context.mounted) context.go('/');
                       },
                       child: Text(loggedIn ? '수락하기' : '로그인하고 수락하기',

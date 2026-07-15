@@ -133,8 +133,10 @@ class MockBackend implements HttpBackend {
       if (code == 'EXPIREDX') {
         return _err(410, 'INVITE_EXPIRED', '만료된 초대예요');
       }
+      // 아직 내가 속하지 않은 팀(team_3) — 수락 시 목록에 추가된다.
       return _ok({
-        'team_name': 'teamname1',
+        'team_id': 'team_3',
+        'team_name': 'teamname3',
         'member_count': 2,
         'session_count': 2,
         'inviter_name': '준서',
@@ -201,7 +203,23 @@ class MockBackend implements HttpBackend {
       });
     }
     g = _match(path, r'^/invites/([^/]+)/(accept|decline)$');
-    if (g != null && m == 'POST') return _ok({'team_id': 'team_1'});
+    if (g != null && m == 'POST') {
+      if (g[1] == 'decline') return const BackendResponse(statusCode: 204);
+      // 수락 → 미리보기의 team_3에 합류 (이미 멤버면 멱등 — 실서버와 동일).
+      if (_team('team_3') == null) {
+        _teams.add({
+          'id': 'team_3',
+          'name': 'teamname3',
+          'leader_id': 'usr_2',
+          'members': [
+            {'id': 'usr_2', 'name': '서진'},
+            {'id': 'usr_1', 'name': '준서'},
+          ],
+          'session_count': 2,
+        });
+      }
+      return _ok({'team_id': 'team_3'});
+    }
 
     // sessions
     g = _match(path, r'^/teams/([^/]+)/sessions$');

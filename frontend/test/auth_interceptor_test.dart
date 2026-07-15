@@ -53,6 +53,23 @@ void main() {
     expect(res['items'], isNotEmpty);
   });
 
+  test('Web: tryRestoreSession() — access 토큰 없이도 쿠키로 세션 복원 (새로고침 시나리오)',
+      () async {
+    final api = ApiClient(backend: backend(), platform: ClientPlatform.web);
+
+    // 새로고침 직후 상태: 메모리가 비어 access 토큰이 없다.
+    expect(api.tokenStore.accessToken, isNull);
+
+    // httpOnly refresh 쿠키(Mock이 흉내냄)로 세션을 되살린다.
+    final ok = await api.tryRestoreSession();
+    expect(ok, isTrue); // 복원 성공
+    expect(api.tokenStore.accessToken, isNotNull); // 새 access 발급됨
+
+    // 복원된 토큰으로 인증 API가 곧바로 동작한다.
+    final me = await api.get('/auth/me') as Map<String, dynamic>;
+    expect((me['user'] as Map)['username'], isNotEmpty);
+  });
+
   test('유효하지 않은 토큰(만료 아님)은 재시도 없이 세션 종료 통지', () async {
     final api = ApiClient(backend: backend(), platform: ClientPlatform.web);
     await api.login('/auth/login', {'username': 'junseo', 'password': 'x'});

@@ -5,6 +5,7 @@ import '../../features/auth/account_recovery_page.dart';
 import '../../features/auth/login_page.dart';
 import '../../features/auth/signup_page.dart';
 import '../../features/auth/verify_email_page.dart';
+import '../../features/common/splash_page.dart';
 import '../../features/home/home_page.dart';
 import '../../features/profile/change_password_page.dart';
 import '../../features/profile/my_page.dart';
@@ -38,6 +39,11 @@ class AppRouter {
     refreshListenable: auth,
     redirect: (context, state) {
       final loc = state.matchedLocation;
+      // 세션 복원 중(새로고침 직후): 로그인/홈 판단을 미루고 스플래시로 고정.
+      // 복원이 끝나면 auth.notifyListeners → redirect 재실행되어 목적지로 나간다.
+      if (auth.booting) return loc == '/splash' ? null : '/splash';
+      // 복원 완료 후 스플래시에 남아있으면 상태에 맞는 화면으로 내보낸다.
+      if (loc == '/splash') return auth.isLoggedIn ? '/' : '/login';
       // 초대 미리보기는 인증 불필요 (spec §3.1 H)
       final isPublic = loc == '/login' ||
           loc == '/signup' ||
@@ -49,6 +55,9 @@ class AppRouter {
       return null;
     },
     routes: [
+      // 세션 복원 중 로딩 화면 (auth.booting) — 라우터 redirect가 관리
+      GoRoute(path: '/splash', builder: (_, _) => const SplashPage()),
+
       // ---- 01 인증 ----
       GoRoute(path: '/login', builder: (_, _) => const LoginPage()),
       GoRoute(path: '/signup', builder: (_, _) => const SignupPage()),
