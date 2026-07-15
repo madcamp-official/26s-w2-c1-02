@@ -48,6 +48,10 @@ class _RehearsalAppState extends State<RehearsalApp> {
     _sessions = SessionController(SessionRepository(_api));
     _api.onAuthExpired = _auth.handleAuthExpired;
     _router = AppRouter(_auth);
+
+    // 새로고침으로 메모리의 access 토큰이 사라져도, 저장된 세션(Web=httpOnly 쿠키)으로
+    // 로그인 상태를 되살린다. 완료되면 notifyListeners → 라우터가 다시 판단한다.
+    _auth.restoreSession();
   }
 
   @override
