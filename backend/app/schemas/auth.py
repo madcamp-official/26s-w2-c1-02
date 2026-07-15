@@ -67,6 +67,36 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class FindUsernameRequest(BaseModel):
+    """POST /auth/username/find 요청 — 이메일로 아이디를 메일 안내받는다 (api-spec §2)."""
+
+    email: str = Field(max_length=254, pattern=_EMAIL_PATTERN)
+
+
+class PasswordResetRequestBody(BaseModel):
+    """POST /auth/password/reset-request 요청 — 재설정 코드 발송 (api-spec §2)."""
+
+    email: str = Field(max_length=254, pattern=_EMAIL_PATTERN)
+
+
+class PasswordResetBody(BaseModel):
+    """POST /auth/password/reset 요청 (api-spec §2).
+
+    code 형식 위반(6자리 아님·문자 포함)은 여기(422)서 걸린다 — VerifyBody와 동일 규칙.
+    new_password 제약은 SignupRequest.password와 일치시킨다(8~128자, bcrypt 72바이트는 라우트에서 방어).
+    """
+
+    email: str = Field(max_length=254, pattern=_EMAIL_PATTERN)
+    code: str = Field(min_length=6, max_length=6, pattern=r"^[0-9]{6}$")
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class PasswordResetResponse(BaseModel):
+    """POST /auth/password/reset 응답 — 성공 시 항상 true."""
+
+    reset: bool
+
+
 class RefreshRequest(BaseModel):
     """POST /auth/refresh 요청 본문 (Native 전용 — Web은 쿠키로 자동 전송, 본문 없음)."""
 

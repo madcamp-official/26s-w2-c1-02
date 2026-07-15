@@ -21,8 +21,12 @@ from app.db.enums import ClientPlatform
 from app.db.session import get_db
 from app.schemas.auth import (
     AuthUser,
+    FindUsernameRequest,
     LoginRequest,
     LoginResponse,
+    PasswordResetBody,
+    PasswordResetRequestBody,
+    PasswordResetResponse,
     RefreshRequest,
     SignupRequest,
     SignupResponse,
@@ -33,12 +37,17 @@ from app.schemas.auth import (
     VerifyRequestBody,
     VerifyResponse,
 )
-from app.services.email import send_verification_email
+from app.services.email import (
+    send_password_reset_email,
+    send_username_reminder_email,
+    send_verification_email,
+)
 from app.services.email_verification import (
     MAX_ATTEMPTS,
     RESEND_COOLDOWN,
     issue_verification_code,
 )
+from app.services.password_reset import issue_reset_code
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -401,6 +410,118 @@ def logout(
             key=_REFRESH_COOKIE, path=_REFRESH_COOKIE_PATH,
             secure=True, httponly=True, samesite="strict",
         )
+
+
+# ============================================================
+# 아이디 찾기 · 비밀번호 재설정 (api-spec §2)
+# ============================================================
+
+
+@router.post("/username/find", status_code=204)
+def find_username(
+    body: FindUsernameRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> None:
+    """아이디 찾기 (api-spec §2): 이메일로 가입된 아이디를 **메일로** 안내. 항상 204.
+
+    아이디를 응답 본문에 절대 싣지 않는다 — 그러면 이메일만 알면 그 사람의 아이디를
+    캐낼 수 있다(계정 열거). 유저가 없어도·소셜 전용(username NULL)이어도 같은 204.
+    """
+    user = _find_user_by_email(db, body.email)
+    if user is None or user.username is None:
+        return  # 204 — 존재 여부·소셜 전용 여부 비노출
+    background_tasks.add_task(send_username_reminder_email, user.email, user.username)
+
+
+@router.post("/password/reset-request", status_code=204)
+def request_password_reset(
+    body: PasswordResetRequestBody,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> None:
+    """비밀번호 재설정 코드 발송 (api-spec §2): 유저가 없어도 같은 204 (계정 열거 방지).
+
+    verify-request와 동일 규율 — 60초 쿨다운(429 + Retry-After)로 발송 스팸·메일 쿼터를
+    보호한다. 소셜 전용(password_hash NULL)은 재설정할 비밀번호가 없으므로 조용히 204.
+    """
+    user = _find_user_by_email(db, body.email)
+    if user is None or user.password_hash is None:
+        return  # 204 — 존재 여부·소셜 전용 여부 비노출 (멱등)
+
+    # 재발송 쿨다운: 마지막 발급(소비 여부 무관) 후 60초 (verify-request와 동일 산식)
+    latest = db.scalar(
+        select(func.max(models.PasswordReset.created_at))
+        .where(models.PasswordReset.user_id == user.id)
+    )
+    if latest is not None:
+        remaining = RESEND_COOLDOWN - (datetime.now(timezone.utc) - latest)
+        if remaining.total_seconds() > 0:
+            retry_after = int(remaining.total_seconds()) + 1  # 올림 — 과소 안내 방지
+            raise ApiError(
+                429, "RATE_LIMITED", "잠시 후 다시 시도해주세요.",
+                details={"retry_after_seconds": retry_after},
+                headers={"Retry-After": str(retry_after)},
+            )
+
+    code = issue_reset_code(db, user)
+    background_tasks.add_task(send_password_reset_email, user.email, code)
+
+
+@router.post("/password/reset", response_model=PasswordResetResponse)
+def reset_password(body: PasswordResetBody, db: Session = Depends(get_db)) -> PasswordResetResponse:
+    """비밀번호 재설정 (api-spec §2): 코드 대조 → 새 비밀번호로 교체 + 전 세션 폐기.
+
+    verify와 같은 규율: 유저 없음도 INVALID_CODE(400)로 존재 여부를 숨기고, attempt 검사는
+    반드시 대조보다 먼저(아니면 5회 초과 후에도 대조 시도 허용). 성공 시 이 유저의 refresh
+    토큰을 전부 폐기한다 — 계정 탈취 상황에서 재설정이 침입자의 세션까지 끊게 하려는 것.
+    """
+    user = _find_user_by_email(db, body.email)
+    if user is None or user.password_hash is None:
+        # 없는 이메일·소셜 전용: 더미 bcrypt 1회로 "틀린 코드"와 응답 시간을 맞추고 같은 400
+        verify_password(body.code, _TIMING_DUMMY_HASH)
+        raise ApiError(400, "INVALID_CODE", "코드가 올바르지 않아요.")
+
+    now = datetime.now(timezone.utc)
+    row = db.scalar(
+        select(models.PasswordReset)
+        .where(
+            models.PasswordReset.user_id == user.id,
+            models.PasswordReset.consumed_at.is_(None),
+            models.PasswordReset.expires_at > now,
+        )
+        .order_by(models.PasswordReset.created_at.desc())
+        .limit(1)
+    )
+    if row is None:
+        raise ApiError(400, "CODE_EXPIRED", "코드가 만료됐어요. 재발송해주세요.")
+    if row.attempt_count >= MAX_ATTEMPTS:  # 소진 — 만료와 동일 취급 (재발송 유도)
+        raise ApiError(400, "CODE_EXPIRED", "시도 횟수를 초과했어요. 재발송해주세요.")
+
+    if not verify_password(body.code, row.code_hash):
+        row.attempt_count += 1
+        db.commit()
+        raise ApiError(400, "INVALID_CODE", "코드가 올바르지 않아요.")
+
+    # 코드가 맞은 뒤에야 새 비밀번호를 해시 — bcrypt 72바이트 상한 초과는 400 (signup과 동일)
+    try:
+        new_hash = hash_password(body.new_password)
+    except PasswordTooLongError as e:
+        raise ApiError(400, "PASSWORD_TOO_LONG", str(e))
+
+    row.consumed_at = now
+    user.password_hash = new_hash
+    # 전 기기 로그아웃: 남아있던 유효 refresh 토큰을 모두 폐기 (재설정=세션 초기화)
+    db.execute(
+        update(models.RefreshToken)
+        .where(
+            models.RefreshToken.user_id == user.id,
+            models.RefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=now)
+    )
+    db.commit()
+    return PasswordResetResponse(reset=True)
 
 
 # 소셜 로그인은 아직 Mock (spec 경로는 /auth/login/social/{provider} — 실구현 시 교체)

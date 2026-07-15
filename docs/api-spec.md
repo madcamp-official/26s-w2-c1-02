@@ -203,12 +203,15 @@ status ∈ { queued, processing, ready, failed }   // 모든 async 리소스 공
 | POST   | `/auth/email/verify-request`    | ✗  | 인증코드 재발송 `{ email }` → **204** (유저 없음·이미 인증도 204 — 계정 열거 방지). 60초 쿨다운 위반 시 `429 RATE_LIMITED`(+`Retry-After` 헤더) |
 | POST   | `/auth/email/verify`            | ✗  | 이메일 인증 `{ email, code(6자리 숫자) }` → **200** `{ "email_verified": true }`(멱등) · 실패 `400 INVALID_CODE`/`CODE_EXPIRED` |
 | POST   | `/auth/login`                   | ✗  | 로그인 `{ username, password }` → 토큰 + 유저. **미인증 유저는 `403 EMAIL_NOT_VERIFIED`** — 비밀번호 검증 통과 후에만(실패는 기존 401) |
+| POST   | `/auth/username/find`           | ✗  | 아이디 찾기 `{ email }` → **204**. 가입돼 있으면 아이디를 **메일로** 안내(응답 본문엔 없음 — 열거 방지). 유저 없음·소셜 전용도 204 |
+| POST   | `/auth/password/reset-request`  | ✗  | 재설정 코드 발송 `{ email }` → **204**(유저 없음·소셜 전용도 204 — 열거 방지). 60초 쿨다운 위반 시 `429 RATE_LIMITED`(+`Retry-After`) |
+| POST   | `/auth/password/reset`          | ✗  | 비밀번호 재설정 `{ email, code(6자리 숫자), new_password(8~128자) }` → **200** `{ "reset": true }` · 실패 `400 INVALID_CODE`/`CODE_EXPIRED`. 성공 시 그 유저의 refresh 전량 폐기(전 기기 로그아웃) |
 | POST   | `/auth/login/social/{provider}` | ✗  | 소셜 로그인 `provider ∈ {google, kakao, naver}`, `{ id_token }` 교환 |
 | POST   | `/auth/refresh`                 | ✓  | refresh → 새 access (자동 로그인). Web=쿠키 자동전송 / Native=본문 `{ refresh_token }` |
 | POST   | `/auth/logout`                  | ✓  | 세션/refresh 무효화 (Web=쿠키 삭제)                                    |
 | GET    | `/auth/me`                      | ✓  | 현재 유저(자동 로그인 확인용). access 만료 시 `401 TOKEN_EXPIRED` → refresh  |
 
-> **아이디/비밀번호 찾기**(와이어프레임 `a3`)는 "관리자에게 문의하세요" 정적 화면 → **엔드포인트 없음**.
+> **아이디/비밀번호 찾기**(와이어프레임 `a3`): 아이디는 이메일로 안내, 비밀번호는 해시로만 저장돼 "찾기"가 불가하므로 **메일 코드 기반 재설정**으로 처리한다. 두 흐름 모두 계정 존재 여부를 응답으로 구분하지 않는다(열거 방지). 재설정 코드는 이메일 인증코드와 동일 규율(10분 TTL·5회 소진·60초 쿨다운)이되 **별도 테이블**(`password_resets`, migrations/003)에 저장 — 인증용 코드로 비밀번호를 바꾸는 목적 혼동을 막기 위함.
 
 **로그인 응답 — Native(iOS/Android), `X-Client-Platform: ios|android`**
 
@@ -662,7 +665,7 @@ HTTP/1.1 202 Accepted
 | --------- | ----------------------- | ----------------------------------------------------------------------------- |
 | 애플리케이션 접속 | 로그인/소셜/자동로그인            | `POST /auth/login`, `/auth/login/social/{p}`, `/auth/refresh`, `GET /auth/me` |
 |           | 회원가입(이메일 인증)            | `POST /auth/signup`, `/auth/email/verify`                                     |
-|           | 아이디·비번 찾기               | (정적 화면, 엔드포인트 없음)                                                             |
+|           | 아이디·비번 찾기               | `POST /auth/username/find`, `/auth/password/reset-request`, `/auth/password/reset` |
 | 메인        | 팀 목록/추가                 | `GET/POST /teams`                                                             |
 |           | 마이페이지                   | `GET/PATCH/DELETE /users/me`                                                  |
 | 프레젠테이션 팀  | 팀 만들기·초대(이메일/링크)·수락     | `POST /teams`, `/teams/{id}/invites`, `/teams/{id}/invites/link`, `/invites/{token}/accept` |
