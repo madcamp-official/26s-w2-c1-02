@@ -24,6 +24,47 @@ flutter run -d chrome \
   --dart-define=API_BASE_URL=http://localhost:8000
 ```
 
+## Android 배포용 APK 빌드 & 업데이트
+
+테스터에게 파일을 직접 전달하는 방식(사설 배포). **Flutter·Android SDK 가 설치된 본인 개발 머신**에서 진행한다.
+
+### 최초 1회 — 서명 키 만들기
+
+업데이트를 매끄럽게 하려면(같은 키로 서명해야 앱을 덮어쓰기 설치 가능) 고정 키가 필요하다.
+
+```bash
+# 1) 키스토어 생성 (비밀번호는 본인이 정하고 잘 보관/백업)
+keytool -genkey -v -keystore ~/rehearsal-release.jks \
+  -keyalg RSA -keysize 2048 -validity 10000 -alias rehearsal
+
+# 2) key.properties 작성
+cp android/key.properties.example android/key.properties
+#    → storeFile 경로/비밀번호/alias 채우기
+```
+
+`android/key.properties` 와 `.jks` 파일은 **절대 커밋 금지**(.gitignore 등록됨).
+`.jks` 를 잃어버리면 기존 앱에 업데이트를 설치할 수 없으니 안전하게 백업할 것.
+
+### 빌드
+
+```bash
+./build-apk.sh
+# → build/app/outputs/flutter-apk/app-release.apk
+```
+
+이 파일을 테스터에게 직접 전달(카톡/드라이브/이메일)하면, 탭 → 설치로 끝난다.
+(안드로이드가 "이 출처에서 설치 허용?" 을 처음 한 번 물어본다.)
+
+### 업데이트 낼 때
+
+1. `pubspec.yaml` 의 `version` 을 올린다 — **`+` 뒤 숫자(versionCode)는 반드시 증가**:
+   `0.1.0+1` → `0.1.1+2`
+2. `./build-apk.sh` 다시 실행.
+3. 새 APK 를 다시 전달 → 테스터가 탭하면 **덮어쓰기 업데이트**(데이터 유지).
+
+> 같은 서명 키를 쓰는 한 덮어쓰기 설치가 되고, 키가 바뀌면 "기존 앱 삭제 후 재설치" 를 해야 한다.
+> 사설 전달 방식은 자동 업데이트가 없으니, 새 버전이 나오면 테스터에게 알려줄 것.
+
 ## 화면 ↔ 라우트 (Figma 기준)
 
 | 화면 | 라우트 | 파일 |
