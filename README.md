@@ -153,7 +153,7 @@ flowchart TD
 
 ### 데이터 구조
 
-- **DBMS:** PostgreSQL 16 — 테이블 **16개**, ENUM **12종**, `updated_at` 트리거. 전체 DDL·ERD는 [docs/db-schema.md](docs/db-schema.md).
+- **DBMS:** PostgreSQL 16 — 테이블 **18개**(마이그레이션 001 초기 16개 + 002 `recording_chunks` + 003 `password_resets`), ENUM **12종**, `updated_at` 트리거. 전체 DDL·ERD는 [docs/db-schema.md](docs/db-schema.md).
 - **PK 전략:** prefix 문자열 + base62 랜덤 20자 (`usr_`, `team_`, `ses_`, `q_` 등). 1:1 자식 테이블(materials/recordings/transcripts/reports/answers)은 부모 PK 재사용.
 - **혼합 저장(D3):** 대용량·가변 구조는 JSONB (`materials.slides`, `transcripts.segments`, `questions.evidence`, `reports.filler_words`), 관계·집계 축은 정규화 테이블(질문·답변·전략별 점수).
 - **파일 저장(A10 확정):** KCLOUD VM **로컬 디스크** + 서명 URL 흉내(`*_url`은 요청 시 발급). DB에는 `storage_key`(경로)만 저장하며 **보관 무기한**(별도 정책 없음). 경로 규약 예: `sessions/{session_id}/recording.m4a`, `sessions/{session_id}/tts/{question_id}.wav`.
@@ -204,13 +204,23 @@ cd infra/gpu-server
 bash setup_tts.sh && bash setup_stt.sh   # 이후 start_tts.sh / start_stt.sh
 ```
 
+### 배포 (프로덕션)
+
+- **서비스 URL:** https://horsetail.madcamp-kaist.org — KCLOUD VM을 Cloudflare Tunnel로 공개.
+- **백엔드:** VM에서 systemd 서비스 `rehearsal-backend`(포트 8000)로 상시 구동. 로그: `journalctl -u rehearsal-backend -f`
+- **프론트엔드(웹):** `flutter build web --release` 결과물을 nginx가 `/var/www/rehearsal`에서 정적 서빙. Cloudflare 엣지 캐시 대응으로 배포마다 커밋 해시 쿼리스트링을 붙여 캐시버스트.
+- **원커맨드 배포:** VM에서 [update.sh](update.sh) 실행 — `git pull` 후 바뀐 쪽만 반영(백엔드 = pip install + 재시작 + 헬스체크 대기, 프론트 = 웹 빌드 + 동기화). `--back` / `--front`로 강제 반영 가능.
+- **DB 마이그레이션:** 자동 적용하지 않음 — `backend/migrations/`에 새 SQL이 감지되면 update.sh가 경고만 하고, [migrations/README.md](backend/migrations/README.md) 절차대로 직접 적용한다.
+- **GPU 서버:** 별도 머신(RTX 3090)에서 tmux로 TTS(:8100) → STT(:8200) 순서로 상시 구동 ([infra/gpu-server/README.md](infra/gpu-server/README.md)).
+- **모바일(Android):** 스토어 배포 대신 서명 APK 직접 전달 — `frontend/build-apk.sh` ([docs/android-apk-release.md](docs/android-apk-release.md)).
+
 ### 기술 구성
 
 | 분류 | 사용 기술 |
 |---|---|
 | 핵심 기술 | Flutter(크로스플랫폼 UI), FastAPI(Python), Google Gemini 2.5(질문·리포트), VoxCPM2(TTS), Qwen3-ASR + ForcedAligner(STT) |
 | 실행 환경 | KCLOUD VM(백엔드) + Cloudflare Tunnel, GPU 서버(RTX 3090 24GB), Flutter Web / iOS / Android |
-| 데이터 저장 | PostgreSQL 16(16테이블 · ENUM 12종 · JSONB), 파일 = VM 로컬 디스크 + 서명 URL(보관 무기한) |
+| 데이터 저장 | PostgreSQL 16(18테이블 · ENUM 12종 · JSONB), 파일 = VM 로컬 디스크 + 서명 URL(보관 무기한) |
 | 외부 API / 서비스 | Google Gemini 2.5 API, Gmail SMTP(이메일 인증·비밀번호 재설정) |
 | 기타 | JWT 인증(Web 쿠키 / Native 본문), 비동기 `202` + 폴링, 레이트리밋은 시연 시 IP 기준 최소 방어만 |
 
