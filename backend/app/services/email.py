@@ -38,9 +38,9 @@ def send_verification_email(to_email: str, code: str) -> None:
         raise EmailSendError(f"알 수 없는 EMAIL_PROVIDER: {settings.email_provider}")
 
     msg = MIMEText(
-        f"Rehearsal.io 인증코드: {code}\n10분 안에 입력해주세요.", _charset="utf-8"
+        f"말꼬리 인증코드: {code}\n10분 안에 입력해주세요.", _charset="utf-8"
     )
-    msg["Subject"] = "[Rehearsal.io] 이메일 인증코드"
+    msg["Subject"] = "[말꼬리] 이메일 인증코드"
     msg["From"] = settings.smtp_user
     msg["To"] = to_email
 
