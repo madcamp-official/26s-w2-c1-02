@@ -21,6 +21,7 @@ ID_PREFIXES = frozenset({
     "soc",   # social_accounts
     "rt",    # refresh_tokens
     "emv",   # email_verifications
+    "pwr",   # password_resets
 })
 
 

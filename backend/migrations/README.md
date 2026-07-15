@@ -15,6 +15,7 @@ git push는 이 `.sql` 파일을 배포할 뿐 DB에 실행하지 않는다 — 
 |---|------|------|------|
 | 001 | `001_init.sql` | 초기 스키마 (db-schema.md v1.0) | 적용됨 |
 | 002 | `002_recording_chunks.sql` | 실시간 녹음 청크 파이프라인: `recording_chunks` 테이블 + `recordings.total_chunks` 컬럼 (api-spec §4.3.1) | ⚠️ **미적용 — `recording` 브랜치 병합과 함께 적용 필요** |
+| 003 | `003_password_resets.sql` | 비밀번호 재설정: `password_resets` 테이블 (아이디·비밀번호 찾기, api-spec §2) | ⚠️ **미적용 — 이 브랜치 병합과 함께 각 DB에 적용 필요** (역방향 무해: 새 테이블 추가뿐, 구 코드 무영향) |
 
 ## ⚠️ 002 — 반드시 읽고 적용 (병합 담당·DB 담당 필독)
 

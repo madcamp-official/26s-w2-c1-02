@@ -106,6 +106,21 @@ class EmailVerification(Base):
     created_at: Mapped[datetime] = mapped_column(timestamptz, server_default=FetchedValue())
 
 
+class PasswordReset(Base):
+    """비밀번호 재설정 코드 (migrations/003). email_verifications와 구조는 같지만
+    목적이 달라(비밀번호 교체 vs 이메일 인증) 테이블을 분리한다 — 003 주석 참고."""
+
+    __tablename__ = "password_resets"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=lambda: new_id("pwr"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    code_hash: Mapped[str] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(timestamptz)
+    consumed_at: Mapped[datetime | None] = mapped_column(timestamptz)
+    attempt_count: Mapped[int] = mapped_column(SmallInteger, server_default=FetchedValue())
+    created_at: Mapped[datetime] = mapped_column(timestamptz, server_default=FetchedValue())
+
+
 # ============================================================
 # 팀 · 멤버십 · 초대 (§3.2)
 # ============================================================
