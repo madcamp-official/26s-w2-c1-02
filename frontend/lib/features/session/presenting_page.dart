@@ -39,10 +39,12 @@ class _PresentingPageState extends State<PresentingPage> {
   int _elapsedSeconds = 0;
   int _slide = 1;
   DateTime? _startedAt;
+  DateTime? _endedAt; // 녹음 정지 시점 (업로드 재시도에도 종료 시각 고정)
   bool _finishing = false;
 
   _MicState _mic = _MicState.checking;
   RecorderService? _recorder; // 실사용 중인 녹음기 (실물 또는 Fake)
+  RecordingResult? _pendingUpload; // 정지 성공·업로드 실패한 WAV — 재시도용 버퍼
 
   @override
   void initState() {
@@ -92,14 +94,23 @@ class _PresentingPageState extends State<PresentingPage> {
   void _enqueueChunk(PcmChunk chunk) {}
 
   Future<void> _finish() async {
-    final recorder = _recorder;
-    if (recorder == null || _finishing) return;
+    // 업로드 실패 후 재시도 시 _recorder는 이미 null — 버퍼된 WAV(_pendingUpload)로
+    // 다시 업로드한다. (이 가드가 recorder null만 보면 재시도가 영원히 막힌다)
+    if (_finishing || (_recorder == null && _pendingUpload == null)) return;
     setState(() => _finishing = true);
     _timer?.cancel();
 
     try {
-      final result = await recorder.stop();
-      _recorder = null;
+      // 녹음 정지는 1회만 — 이후 재시도는 저장해둔 결과를 재사용한다.
+      final RecordingResult result;
+      if (_pendingUpload != null) {
+        result = _pendingUpload!;
+      } else {
+        result = await _recorder!.stop();
+        _recorder = null;
+        _pendingUpload = result;
+        _endedAt = DateTime.now(); // 재시도해도 발표 종료 시각은 정지 시점으로 고정
+      }
 
       if (!mounted) return;
       // §0.8: 실시간 모드도 일괄 업로드로 수렴 — 전체 WAV 1회 전송.
@@ -108,17 +119,19 @@ class _PresentingPageState extends State<PresentingPage> {
             fileName: result.fileName,
             bytes: result.wavBytes,
             startedAt: _startedAt ?? DateTime.now(),
-            endedAt: DateTime.now(),
+            endedAt: _endedAt ?? DateTime.now(),
             durationSeconds: result.durationSeconds.round(),
           );
+      _pendingUpload = null;
       if (mounted) {
         context.pushReplacement('/sessions/${widget.sessionId}/processing');
       }
     } catch (e) {
       if (mounted) {
         setState(() => _finishing = false);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('업로드 실패: $e — 다시 시도해주세요')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text('업로드 실패: $e — "발표 마치기"를 다시 누르면 재시도해요')));
       }
     }
   }
@@ -254,7 +267,10 @@ class _PresentingPageState extends State<PresentingPage> {
                   RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             ),
             onPressed: _finishing ? null : _finish,
-            child: Text(_finishing ? '마무리 업로드 중…' : '발표 마치기',
+            child: Text(
+                _finishing
+                    ? '마무리 업로드 중…'
+                    : (_pendingUpload != null ? '업로드 재시도' : '발표 마치기'),
                 style:
                     const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
           ),
