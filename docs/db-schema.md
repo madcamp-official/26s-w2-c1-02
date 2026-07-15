@@ -1,7 +1,8 @@
-# Rehearsal.io — DB 스키마 (v1.0)
+# Rehearsal.io — DB 스키마 (v1.1)
 
 > **api-spec.md v0.3** + `infra/gpu-server/README.md` 기준. PostgreSQL 16.
-> 작성일: 2026-07-11 · 상태: 초안 — §0 결정사항은 팀 합의 완료(2026-07-11), §9 미결정 항목만 후속.
+> 작성일: 2026-07-11 · 최종 갱신: 2026-07-15 · 상태: **확정** — 마이그레이션 001~003 전부 반영. **테이블 18개 · ENUM 12종**.
+> 스키마 원본은 [backend/migrations/](../backend/migrations/) (001_init → 002_recording_chunks → 003_password_resets). 이 문서와 어긋나면 마이그레이션 SQL이 진실이다.
 
 ---
 
@@ -14,9 +15,9 @@
 | D3 | 대용량 데이터 | **혼합** | slides·segments·evidence·filler_words = JSONB / 질문·답변·전략별 점수 = 테이블 |
 | D4 | 회원 탈퇴 | **익명화** | `users` row 보존 + PII null화 + `deleted_at`. 팀 세션·Q&A 보존 (§7.1) |
 | D5 | 팀장 이탈 | **자동 승계** | `joined_at` 최소(동률 시 `user_id`) 멤버가 승계, 마지막 1인이면 팀 삭제 (§7.2) |
-| D6 | 인증 보조 | **전부 포함** | `refresh_tokens`, `social_accounts`, `email_verifications` |
+| D6 | 인증 보조 | **전부 포함** | `refresh_tokens`, `email_verifications`, `password_resets`(003), `social_accounts`(스키마만 — 소셜 로그인은 최종 미구현) |
 
-**ID prefix 규약**: `usr_ team_ inv_ lnk_ ses_ q_ soc_ rt_ emv_` (1:1 자식 테이블은 부모 PK 재사용 — materials/recordings/transcripts/reports/answers는 별도 ID 없음).
+**ID prefix 규약**: `usr_ team_ inv_ lnk_ ses_ q_ soc_ rt_ emv_ pwr_` (1:1 자식 테이블은 부모 PK 재사용 — materials/recordings/transcripts/reports/answers는 별도 ID 없음. `recording_chunks`는 `(session_id, seq)` 복합 PK).
 
 ---
 
@@ -221,6 +222,8 @@ CREATE TYPE follow_up_status   AS ENUM ('pending', 'generated', 'none');
 CREATE TYPE ended_reason       AS ENUM ('user_end', 'count_reached', 'timeout');
 ```
 
+> `social_provider`는 스키마·모델에만 존재 — 소셜 로그인이 최종 미구현(Mock 엔드포인트)이라 런타임에서는 쓰이지 않는다.
+
 ---
 
 ## 3. DDL
@@ -275,6 +278,21 @@ CREATE TABLE email_verifications (
     created_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX email_verifications_user_idx ON email_verifications (user_id) WHERE consumed_at IS NULL;
+
+-- 003: 비밀번호 재설정 코드 (아이디·비밀번호 찾기).
+-- email_verifications와 구조·규율이 같지만 테이블을 분리한다 — 한쪽은 "이메일 인증",
+-- 한쪽은 "비밀번호 교체"로 목적이 달라, 공유하면 인증용 코드로 비밀번호를 바꾸는
+-- 목적 혼동(confused deputy)이 생긴다. 코드 평문은 메일로만 나가고 DB엔 bcrypt 해시만.
+CREATE TABLE password_resets (
+    id            text PRIMARY KEY,                  -- 'pwr_'
+    user_id       text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash     text NOT NULL,                     -- 재설정 코드 bcrypt 해시
+    expires_at    timestamptz NOT NULL,
+    consumed_at   timestamptz,
+    attempt_count smallint NOT NULL DEFAULT 0,       -- 브루트포스 방지
+    created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX password_resets_user_idx ON password_resets (user_id) WHERE consumed_at IS NULL;
 ```
 
 ### 3.2 팀 · 멤버십 · 초대
@@ -355,10 +373,10 @@ CREATE INDEX sessions_team_idx  ON sessions (team_id, created_at DESC);   -- 팀
 CREATE INDEX sessions_owner_idx ON sessions (owner_id, created_at DESC);  -- E: 성장 리포트(유저 스코프)
 ```
 
-### 3.4 세션 1:1 자식 — 자료 · 녹음 · 전사
+### 3.4 세션 자식 — 자료 · 녹음 · 녹음 청크 · 전사
 
-> 1:1 관계는 `session_id`를 그대로 PK로 사용 (별도 ID 불필요, 존재 여부 = "업로드/생성됨").
-> 파일 본문은 오브젝트 스토리지(A10) — DB에는 `storage_key`만. `*_url`은 요청 시 서명 발급.
+> 1:1 관계(materials·recordings·transcripts)는 `session_id`를 그대로 PK로 사용 (별도 ID 불필요, 존재 여부 = "업로드/생성됨"). `recording_chunks`(002)만 1:N — `(session_id, seq)` 복합 PK.
+> 파일 본문은 **VM 로컬 디스크**(A10 확정) — DB에는 `storage_key`(경로)만. `*_url`은 요청 시 서명 URL 발급.
 
 ```sql
 CREATE TABLE materials (
@@ -387,6 +405,29 @@ CREATE TABLE recordings (
     started_at       timestamptz,                    -- 클라이언트 보고값(A9)
     ended_at         timestamptz,
     created_at       timestamptz NOT NULL DEFAULT now()
+);
+-- 002: /recording/complete가 보고한 기대 청크 수 — 누락 seq 검출(0..total_chunks−1)용.
+-- 일괄/파일 업로드 경로(§4.3)는 NULL로 남는다.
+ALTER TABLE recordings ADD COLUMN total_chunks integer CHECK (total_chunks >= 0);
+
+-- 002: 실시간 녹음 청크 (발표 중 60초 + 4초 **앞**겹침으로 순차 업로드, api-spec §4.3.1).
+-- (session_id, seq) PK → 같은 seq 재전송은 upsert로 덮어써져 멱등. 청크별 STT 결과는
+-- 청크-로컬 타임스탬프 그대로 segments에 쌓고, /recording/complete에서 오프셋 보정 +
+-- 겹침 중점 절단으로 transcripts.segments에 병합한다.
+CREATE TABLE recording_chunks (
+    session_id       text NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    seq              integer NOT NULL CHECK (seq >= 0),            -- 0-base 순번
+    offset_seconds   real NOT NULL CHECK (offset_seconds >= 0),    -- 녹음 시작 기준 시작 오프셋(겹침 포함)
+    overlap_seconds  real NOT NULL DEFAULT 0 CHECK (overlap_seconds >= 0),  -- 앞 청크와의 겹침(첫 청크 0)
+    duration_seconds real NOT NULL CHECK (duration_seconds > 0),
+    storage_key      text NOT NULL,
+    status           async_status NOT NULL DEFAULT 'queued',       -- 청크별 STT 상태
+    segments         jsonb,                             -- 청크-로컬 [{"start":..,"end":..,"text":..}]
+    error_code       text,
+    error_message    text,
+    created_at       timestamptz NOT NULL DEFAULT now(),
+    updated_at       timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (session_id, seq)
 );
 
 CREATE TABLE transcripts (
@@ -484,7 +525,7 @@ CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
 BEGIN NEW.updated_at = now(); RETURN NEW; END $$ LANGUAGE plpgsql;
 
 -- updated_at 보유 테이블 전부에 부착:
--- users, teams, sessions, materials, transcripts, answers, reports
+-- users, teams, sessions, materials, transcripts, answers, reports (+ recording_chunks는 002에서)
 DO $$
 DECLARE t text;
 BEGIN
@@ -494,6 +535,10 @@ BEGIN
                         FOR EACH ROW EXECUTE FUNCTION set_updated_at()', t, t);
     END LOOP;
 END $$;
+
+-- 002에서 recording_chunks에도 동일 트리거 부착:
+CREATE TRIGGER recording_chunks_updated_at BEFORE UPDATE ON recording_chunks
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
 
 ---
@@ -502,19 +547,22 @@ END $$;
 
 | API (v0.3) | 테이블 | 비고 |
 |---|---|---|
-| `/auth/signup·login·refresh·logout` | `users`, `refresh_tokens`, `email_verifications` | refresh는 해시만 저장 |
-| `/auth/login/social/{provider}` | `social_accounts` | `UNIQUE(provider, provider_user_id)` |
+| `/auth/signup·login·refresh·logout` | `users`, `refresh_tokens` | refresh는 해시만 저장 |
+| `/auth/email/verify-request`, `/auth/email/verify` | `email_verifications` | SMTP 실발송(`EMAIL_PROVIDER=smtp`) / mock은 서버 로그 출력 |
+| `/auth/username/find`, `/auth/password/reset-request·reset` | `password_resets` | 코드는 bcrypt 해시만 저장 (003) |
+| ~~`/auth/login/{provider}`~~ | `social_accounts` | **소셜 로그인 미구현** — Mock 응답만, 테이블 런타임 미사용 |
 | `/users/me` | `users` | 탈퇴 = 익명화(§7.1) |
 | `/teams*`, `/teams/{id}/members` | `teams`, `team_members` | 팀장 = `teams.leader_id` |
 | `/teams/{id}/invites*` (이메일) | `team_email_invites` | pending 부분 유니크 |
 | `/teams/{id}/invites/link` | `team_invite_links` | 활성 1개 부분 유니크 (G) |
 | `/invites/{token}/*` | 두 초대 테이블 `token` 컬럼 | 이메일·링크 공용 진입점 |
 | `/teams/{id}/sessions`, `/sessions/{id}` | `sessions` | `owner_id`(F), `personas` enum[] |
-| `/sessions/{id}/material` | `materials` | slides = JSONB |
-| `/sessions/{id}/recording` | `recordings` | 파일은 스토리지 |
-| `/sessions/{id}/transcript` | `transcripts` | segments = JSONB(초 단위) |
-| `/sessions/{id}/qna*` | `questions`, `answers` | 꼬리질문 = self-FK |
-| `/sessions/{id}/report` | `reports` + `report_type_scores` | 점수 정규화(C) |
+| `/sessions/{id}/material` (+`/retry`) | `materials` | slides = JSONB |
+| `/sessions/{id}/recording`, `/recording/start·complete` | `recordings` | 파일은 로컬 디스크, `total_chunks`로 누락 검출 |
+| `/sessions/{id}/recording/chunks` | `recording_chunks` | `(session_id, seq)` upsert = 멱등 재전송 (002) |
+| `/sessions/{id}/transcript` (+`/retry`) | `transcripts` | segments = JSONB(초 단위) |
+| `/sessions/{id}/qna*` (generate·answer·pass·end) | `questions`, `answers` | 꼬리질문 = self-FK |
+| `/sessions/{id}/report` (+`/generate`) | `reports` + `report_type_scores` | 점수 정규화(C) |
 | `/users/me/report/growth` | (질의 — §8.1) | 저장 테이블 없음 |
 
 ---
@@ -550,7 +598,8 @@ DB에 저장하지 않고 **서빙 시 파생**하는 값들:
 [ { "start": 12.0, "end": 15.2, "text": "안녕하세요, 어… 오늘 발표를 맡은 박준서입니다." } ]
 ```
 > `infra/gpu-server` STT `/transcribe` 응답의 `segments[{text,start,end}]`를 **그대로 저장**(초 단위 float).
-> 60분 녹음은 백엔드가 5분 청크로 분할 후 **오프셋 합산하여 병합**한 결과를 저장(ForcedAligner 제약).
+> **실시간 모드**: FE가 보낸 60초+4초 앞겹침 청크(`recording_chunks.segments`)를 `/recording/complete`에서 오프셋 보정 + 겹침 중점 절단으로 병합해 저장.
+> **업로드 모드**: 백엔드(`stt.py`)가 파일을 60초+4초 뒤겹침 청크로 직접 분할·직렬 전사 후 병합(ForcedAligner 5분/건 제약의 충분히 안쪽).
 
 ### 6.3 `questions.evidence`
 ```json
@@ -597,7 +646,7 @@ ORDER BY joined_at, user_id LIMIT 1;
 
 | 삭제 대상 | DB cascade | 오브젝트 스토리지(앱 책임) |
 |---|---|---|
-| 세션 | materials → recordings → transcripts → questions(+answers) → reports(+type_scores), `current_question_id` SET NULL | 자료(PDF·PPTX)·발표녹음·질문TTS·답변오디오 파일 삭제 |
+| 세션 | materials → recordings(+recording_chunks) → transcripts → questions(+answers) → reports(+type_scores), `current_question_id` SET NULL | 자료(PDF·PPTX)·발표녹음·청크 오디오·질문TTS·답변오디오 파일 삭제 |
 | 팀 | sessions 전체(위 연쇄 포함) + 멤버십 + 초대 | 위 전체 |
 | 질문(꼬리 포함) | 자식 꼬리질문·답변 | TTS·답변 오디오 |
 | 유저(탈퇴) | **cascade 없음** — 익명화(§7.1) | 없음(세션 보존) |
@@ -648,23 +697,25 @@ ORDER BY t.created_at DESC;
 
 ---
 
-## 9. 미결정 (스키마 영향 있는 것만)
+## 9. 미결정이었던 항목 — 최종 처리 결과
 
-| 항목 | 현재 상태 | 스키마 영향 |
+| 항목 | 최종 상태 | 스키마 영향 |
 |---|---|---|
-| 데이터 보관 정책(A10) | 미정 | 보관 기한 도입 시 `recordings.expires_at` 등 추가 + 청소 배치. 현재는 무기한 |
-| ~~WPM에서 필러 제외 여부(v0.3 §5.2)~~ | **결정: 제외(2026-07-13)** | 완료 — §3.6 주석 갱신, `compute_speaking_metrics(exclude_fillers=True)` |
-| TTS 재생성 정책(§8) | 미정 | 없음 — `tts_status='failed'` 재시도는 UPDATE로 충분 |
-| `personas` 배열 중복값 | 앱에서 dedupe | DB CHECK로는 미강제(단순화) |
-| 레이트리밋/쿼터 | 미정 | 도입 시 별도 카운터 테이블 또는 Redis |
+| 데이터 보관 정책(A10) | **무기한 보관으로 종료** — 별도 정책 미도입 | 없음 (도입했다면 `recordings.expires_at` 등 + 청소 배치) |
+| ~~WPM에서 필러 제외 여부(v0.3 §5.2)~~ | **결정·구현: 제외(2026-07-13)** | 완료 — §3.6 주석 갱신, `compute_speaking_metrics(exclude_fillers=True)` |
+| TTS 재생성 정책(§8) | 재생성 API 미도입 — 서버 재시작 시 미완료 TTS 잡 자동 복구(`qna_jobs.recover_tts`)로 처리 | 없음 |
+| `personas` 배열 중복값 | 앱에서 dedupe로 종료 | DB CHECK 미강제(단순화) |
+| 레이트리밋/쿼터 | **미도입으로 종료** | 없음 |
 
 ---
 
-## 부록 A. 테이블 목록 (16개)
+## 부록 A. 테이블 목록 (18개)
 
 | 도메인 | 테이블 |
 |---|---|
-| 유저·인증 (4) | `users`, `social_accounts`, `refresh_tokens`, `email_verifications` |
+| 유저·인증 (5) | `users`, `social_accounts`, `refresh_tokens`, `email_verifications`, `password_resets` |
 | 팀 (4) | `teams`, `team_members`, `team_email_invites`, `team_invite_links` |
-| 세션 (4) | `sessions`, `materials`, `recordings`, `transcripts` |
+| 세션 (5) | `sessions`, `materials`, `recordings`, `recording_chunks`, `transcripts` |
 | Q&A·리포트 (4) | `questions`, `answers`, `reports`, `report_type_scores` |
+
+> 마이그레이션 이력: `001_init.sql`(16개) → `002_recording_chunks.sql`(+`recording_chunks`, `recordings.total_chunks` 컬럼) → `003_password_resets.sql`(+`password_resets`)
