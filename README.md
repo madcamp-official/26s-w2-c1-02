@@ -45,7 +45,7 @@ AI 청중과 실시간 음성으로 대화하는 발표 리허설 서비스. 사
 발표 연습의 핵심은 실제 청중의 반응과 예상치 못한 질문에 즉석에서 말로 대응하는 경험이지만, 혼자 하는 리허설로는 이를 얻기 어렵다. 다양한 성향의 AI 청중 페르소나가 던지는 질문을 TTS로 직접 듣고, 사용자가 말로 답하면 STT로 변환된 답변을 LLM이 이해해 꼬리 질문을 이어가는 음성 기반 질의응답 루프를 구현함으로써, 텍스트 채팅이 아닌 실전과 동일한 '듣고 말하는' 리허설 환경을 제공한다. 나아가 축적된 발표·답변 기록을 분석해 "어떤 질문에 강하고 약한지", 자신의 발표 스타일이 어떤지에 대한 인사이트와 성장 리포트를 제공하여 사용자의 발표 역량을 체계적으로 성장시키는 것이 목적이다. 이 과정에서 LLM·TTS·STT API를 결합한 음성 대화 파이프라인을 여러 실행 환경에서 사용할 수 있는 형태로 구현한다.
 
 - **선택 옵션:** LLM Wrapper + Cross-Platform
-  - **LLM Wrapper:** Google Gemini 2.5 API로 페르소나별 예상 질문·꼬리질문 생성과 발표 분석 리포트를 수행하고, GPU 서버의 STT(Qwen3-ASR)·TTS(VoxCPM2)와 결합해 음성 질의응답 파이프라인을 구성한다.
+  - **LLM Wrapper:** Google Gemini Flash 3.5 API로 페르소나별 예상 질문·꼬리질문 생성과 발표 분석 리포트를 수행하고, GPU 서버의 STT(Qwen3-ASR)·TTS(VoxCPM2)와 결합해 음성 질의응답 파이프라인을 구성한다.
   - **Cross-Platform:** Flutter 단일 코드베이스로 Web · iOS · Android를 동시 지원한다(웹 기반 프레임워크 대신 네이티브 크로스플랫폼 프레임워크 채택).
 
 - **핵심 구현 요소:**
@@ -53,28 +53,28 @@ AI 청중과 실시간 음성으로 대화하는 발표 리허설 서비스. 사
   - **AI 청중 페르소나 질문 생성:** 5종 페르소나(에겐·테토·꼰대·멍청·잼민)와 4종 질문 전략(디테일 추궁·큰그림·기초개념·수치검증)으로 질문을 만들고, 각 질문에 근거(슬라이드 번호·전사 타임스탬프)를 부여. 선택한 페르소나는 질의 수에 걸쳐 균등 랜덤 배분(예: 5문항·3페르소나 → 2/2/1).
   - **발표 세션 기록 & 분석·성장 리포트:** 슬라이드·전사·Q&A 로그를 세션 단위로 영속화하고, 전략별 답변 점수·WPM·필러워드로 단일 세션 리포트와 회차 비교 성장 리포트를 생성.
 - **사용 / 시연 시나리오:**
-  1. 로그인 후 팀을 만들고 팀원을 초대한다(이메일 / 링크).
+  1. 로그인 후 팀을 만들고 팀원을 초대한다(코드).
   2. 발표 세션을 생성하며 자료(PDF·PPTX)를 업로드하고, 페르소나·질의 수·제한시간을 설정한다.
   3. 발표를 녹음(또는 파일 업로드)하면 STT로 전사되고, AI가 슬라이드·전사 기반 질문을 생성한다.
   4. 질문이 페르소나 음성(TTS)으로 재생되고, 사용자가 말로 답하면 답변이 전사되어 꼬리질문으로 이어진다.
   5. 질의응답 종료 시 분석 리포트가 자동 생성되고, 마이페이지에서 회차별 성장 리포트를 확인한다.
 - **팀원별 역할:**
   - **박준서 (Frontend):** Flutter 28화면, 상태관리, 폴링 UX, 오디오 녹음/재생, Mock → 실API 전환
-  - **정서영 (Backend Core):** FastAPI + PostgreSQL, 인증(JWT)/팀/초대/세션 CRUD, 상태머신, 파일 스토리지, 배포
-  - **이서진 (AI Pipeline):** GPU 서버(STT/TTS) 운영·연동, PDF 파싱, Gemini 2.5 질문·꼬리질문·리포트 프롬프트, 정량 지표
+  - **정서영 (Backend Core):** FastAPI + PostgreSQL, 인증(JWT)/팀/초대/세션 CRUD, 상태머신, 파일 스토리지
+  - **이서진 (AI Pipeline):** GPU 서버(STT/TTS) 운영·연동, PDF 파싱, Gemini Flash 3.5 질문·꼬리질문·리포트 프롬프트, 정량 지표, 배포
   > 상세 워크플로우·경계 규칙은 [docs/workflow.md](docs/workflow.md) 참고.
 
 ### 개발 일정
 
 | 날짜 | 목표 |
 |---|---|
-| Day 1 | 주제 선정 |
-| Day 2 | 와이어 프레임, 주제 구체화  |
-| Day 3 | **Step 1 — 기반 구축**: DB(PostgreSQL 16 DDL)·인증(JWT)·팀 CRUD, FE 데이터 모델·라우트 골격·폴링 위젯, GPU 셋업·페르소나 voice design 착수, Gemini 연결 |
-| Day 4 | **Step 2 — 자료·녹음 파이프라인**: 세션 상태머신, PDF 파싱, 녹음 중 1분 청크 전송·STT 병합, 발표 준비/녹음 화면 |
-| Day 5 | **Step 3 — Q&A 루프(심장)**: 질문·꼬리질문 프롬프트, 질문 TTS, 답변 비동기(202+폴링), 질의응답 화면 |
-| Day 6 | **Step 4 — 리포트 + 실물 통합**: 정량 지표·리포트 LLM, 리포트 API, Mock-off E2E, 크로스플랫폼 검증 |
-| Day 7 | **Step 5 — 안정화 + 시연 준비**: 에러/재시도 UX, 시드·데모 계정, 레이트리밋 최소 방어, README 마무리, 시연 영상 |
+| Day 1 | **주제 선정** |
+| Day 2 | **와이어 프레임, 주제 구체화** |
+| Day 3 | **기반 구축**: DB(PostgreSQL 16 DDL)·인증(JWT)·팀 CRUD, FE 데이터 모델·라우트 골격·폴링 위젯, GPU 셋업·페르소나 voice design 착수, Gemini 연결 |
+| Day 4 | **자료·녹음 파이프라인**: 세션 상태머신, PDF 파싱, 녹음 중 1분 청크 전송·STT 병합, 발표 준비/녹음 화면 |
+| Day 5 | **Q&A 루프(심장)**: 질문·꼬리질문 프롬프트, 질문 TTS, 답변 비동기(202+폴링), 질의응답 화면 |
+| Day 6 | **리포트 + 실물 통합**: 정량 지표·리포트 LLM, 리포트 API, Mock-off E2E, 크로스플랫폼 검증 |
+| Day 7 | **안정화 + 시연 준비**: 에러/재시도 UX, 시드·데모 계정, 레이트리밋 최소 방어, README 마무리, 시연 영상 |
 
 ---
 
@@ -86,10 +86,7 @@ AI 청중과 실시간 음성으로 대화하는 발표 리허설 서비스. 사
 | AI 페르소나 질문 생성 + 근거 표시 | 5종 페르소나 · 4종 전략, 근거(슬라이드·전사 ts), 질의 수 균등 랜덤 배분 | 필수 |
 | 발표 세션 기록 & 분석·성장 리포트 | 세션 영속화, 전략별 답변 점수·WPM·필러워드, 회차 비교 성장 리포트 | 필수 |
 | 인증·팀·세션 관리 | JWT(Web 쿠키 / Native 본문), 팀·초대·승계, 세션 CRUD·상태머신 | 필수 |
-| 이메일 인증·계정 복구 | 이메일 인증 **SMTP 실발송까지 구현**(개발 시 mock 모드는 로그 출력), 아이디 찾기·비밀번호 재설정 구현 | 필수 |
-| ~~소셜 로그인 (구글 1종)~~ | **미구현** — Mock 엔드포인트만 존재(카카오/네이버 포함). 인증은 이메일 회원가입·로그인으로 일원화 | 제외 |
-| 실시간 진행률 (SSE/WebSocket) | 질문 생성·TTS 대기 등 진행률 push. 미도입 시 폴링 폴백 유지 | 선택 |
-| ~~실존 인물 목소리 클로닝 (Qwen3-TTS)~~ | 이번 범위에서 **제외 확정**. TTS는 VoxCPM2 페르소나 음성으로 일원화 | 제외 |
+| 이메일 인증·계정 복구 | 이메일 인증 **SMTP 실발송까지 구현**, 아이디 찾기·비밀번호 재설정 구현 | 필수 |
 
 ---
 
@@ -115,7 +112,7 @@ flowchart TD
         BE --- FS
     end
 
-    BE -->|질문·꼬리질문·리포트| GEM[Google Gemini 2.5 API]
+    BE -->|질문·꼬리질문·리포트| GEM[Google Gemini Flash 3.5 API]
     BE -->|인증·재설정 코드 발송| SMTP[Gmail SMTP]
 
     subgraph GPU["GPU 서버 (RTX 3090 24GB)"]
@@ -168,7 +165,7 @@ flowchart TD
 | REST | `/auth/*` | 회원가입·로그인·refresh·이메일 인증·아이디 찾기·비밀번호 재설정 | `{username,password}` 등 | 토큰 + 유저 | Web=httpOnly 쿠키 / Native=본문 (`X-Client-Platform`) |
 | REST | `/teams/*`, `/invites/*` | 팀·멤버·초대(이메일/링크)·승계 | `{name}`, `{email}` 등 | 팀·초대 리소스 | 팀장 승계 트랜잭션 |
 | REST | `/sessions/*` | 세션·자료·녹음·전사·Q&A·리포트 | multipart(PDF·PPTX/오디오) 등 | 상태 필드 + 결과 | 무거운 작업 `202` + 폴링 |
-| 외부 API | Google Gemini 2.5 | 질문·꼬리질문·리포트 생성 | 슬라이드+전사+페르소나 프롬프트 | JSON(질문·evidence·점수) | `LLMProvider` 추상화 뒤에 연결 |
+| 외부 API | Google Gemini Flash 3.5 | 질문·꼬리질문·리포트 생성 | 슬라이드+전사+페르소나 프롬프트 | JSON(질문·evidence·점수) | `LLMProvider` 추상화 뒤에 연결 |
 | 외부 SMTP | Gmail SMTP (STARTTLS :587) | 이메일 인증·비밀번호 재설정 코드 발송 | 인증 코드 메일 | — | `EMAIL_PROVIDER=mock`이면 발송 대신 서버 로그 출력 |
 | 내부 HTTP | GPU `:8100` `/v1/audio/speech` | TTS (VoxCPM2, 페르소나 음성) | `{input, voice}` | 오디오(wav/mp3) | OpenAI 호환 포맷 |
 | 내부 HTTP | GPU `:8200` `/transcribe` | STT (Qwen3-ASR + ForcedAligner) | 오디오 청크 | `{segments:[{text,start,end}]}` | 녹음 중 1분 청크·직렬 처리 (5분 = ForcedAligner 상한) |
@@ -178,9 +175,9 @@ flowchart TD
 ## 산출물 및 실행 방법
 
 - **산출물 설명:** Rehearsal.io — AI 청중과 음성으로 대화하며 발표를 리허설하고, 질의응답 기록을 분석해 성장 리포트를 제공하는 크로스플랫폼 발표 준비 서비스.
-- **실행 환경:** Flutter 앱(Web / iOS / Android) + FastAPI·PostgreSQL 백엔드(KCLOUD VM, Cloudflare Tunnel) + GPU 서버(RTX 3090 24GB, STT/TTS) + Google Gemini 2.5 API.
+- **실행 환경:** Flutter 앱(Web / iOS / Android) + FastAPI·PostgreSQL 백엔드(KCLOUD VM, Cloudflare Tunnel) + GPU 서버(RTX 3090 24GB, STT/TTS) + Google Gemini Flash 3.5 API.
 - **실행 방법:** 아래 참고 (백엔드 → 프론트엔드 → GPU 서버 순).
-- **시연 영상 / 이미지:** (Day 7 시연 준비 시 추가)
+- **시연 영상 / 이미지:** 
 
 ### 실행 방법
 
@@ -221,7 +218,7 @@ bash setup_tts.sh && bash setup_stt.sh   # 이후 start_tts.sh / start_stt.sh
 | 핵심 기술 | Flutter(크로스플랫폼 UI), FastAPI(Python), Google Gemini 2.5(질문·리포트), VoxCPM2(TTS), Qwen3-ASR + ForcedAligner(STT) |
 | 실행 환경 | KCLOUD VM(백엔드) + Cloudflare Tunnel, GPU 서버(RTX 3090 24GB), Flutter Web / iOS / Android |
 | 데이터 저장 | PostgreSQL 16(18테이블 · ENUM 12종 · JSONB), 파일 = VM 로컬 디스크 + 서명 URL(보관 무기한) |
-| 외부 API / 서비스 | Google Gemini 2.5 API, Gmail SMTP(이메일 인증·비밀번호 재설정) |
+| 외부 API / 서비스 | Google Gemini Flash 3.5 API, Gmail SMTP(이메일 인증·비밀번호 재설정) |
 | 기타 | JWT 인증(Web 쿠키 / Native 본문), 비동기 `202` + 폴링, 레이트리밋은 시연 시 IP 기준 최소 방어만 |
 
 ---
