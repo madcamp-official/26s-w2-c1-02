@@ -19,11 +19,13 @@ class LoginPage extends StatefulWidget {
 class _LoginPageState extends State<LoginPage> {
   final _usernameController = TextEditingController();
   final _pwController = TextEditingController();
+  final _pwFocus = FocusNode();
 
   @override
   void dispose() {
     _usernameController.dispose();
     _pwController.dispose();
+    _pwFocus.dispose();
     super.dispose();
   }
 
@@ -82,12 +84,19 @@ class _LoginPageState extends State<LoginPage> {
                 const SizedBox(height: 32),
                 TextField(
                   controller: _usernameController,
+                  textInputAction: TextInputAction.next,
+                  onSubmitted: (_) => _pwFocus.requestFocus(),
                   decoration: const InputDecoration(hintText: '아이디'),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _pwController,
+                  focusNode: _pwFocus,
                   obscureText: true,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) {
+                    if (!loading) _login();
+                  },
                   decoration: const InputDecoration(hintText: '비밀번호'),
                 ),
                 const SizedBox(height: 16),
