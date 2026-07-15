@@ -42,6 +42,9 @@ class MockBackend implements HttpBackend {
   };
   final Set<String> _unverifiedEmails = {'unverified@rehearsal.io'};
   final Map<String, int> _verifyAttempts = {}; // 이메일별 오입력 횟수 (5회 소진)
+  // 비밀번호 재설정 코드도 인증코드와 같은 규율: '000000' 성공, '111111' 만료, 5회 소진.
+  static const resetCode = '000000';
+  final Map<String, int> _resetAttempts = {}; // 이메일별 재설정 코드 오입력 횟수
 
   static const _me = {
     'id': 'usr_1',
@@ -110,6 +113,16 @@ class MockBackend implements HttpBackend {
       _verifyAttempts.remove(r.jsonBody?['email'] as String? ?? '');
       return const BackendResponse(statusCode: 204);
     }
+    // 아이디 찾기 — 유저가 없어도 항상 204 (계정 열거 방지, §2). 아이디는 메일로만.
+    if (m == 'POST' && path == '/auth/username/find') {
+      return const BackendResponse(statusCode: 204);
+    }
+    // 비밀번호 재설정 코드 발송 — 새 코드 발급 → 오입력 카운터 리셋. 항상 204 (§2).
+    if (m == 'POST' && path == '/auth/password/reset-request') {
+      _resetAttempts.remove(r.jsonBody?['email'] as String? ?? '');
+      return const BackendResponse(statusCode: 204);
+    }
+    if (m == 'POST' && path == '/auth/password/reset') return _resetPassword(r);
     if (m == 'POST' && path == '/auth/refresh') return _refresh(r);
     if (m == 'GET' && _match(path, r'^/invites/([^/]+)$') != null) {
       final code = _match(path, r'^/invites/([^/]+)$')![0];
@@ -368,6 +381,27 @@ class MockBackend implements HttpBackend {
     _verifyAttempts.remove(email);
     _unverifiedEmails.remove(email); // 멱등 — 이미 인증된 이메일도 200 (§9)
     return _ok({'email_verified': true});
+  }
+
+  /// 비밀번호 재설정 — 코드 대조. 실서버와 동일하게 attempt 검사가 대조보다 먼저.
+  BackendResponse _resetPassword(BackendRequest r) {
+    final email = r.jsonBody?['email'] as String? ?? '';
+    final code = r.jsonBody?['code'] as String?;
+    if (code == '111111') {
+      // 매직 코드 — 만료 시나리오 UI(재발송 강조) 검증용. 실서버는 10분 TTL로 발생.
+      return _err(400, 'CODE_EXPIRED', '코드가 만료됐어요');
+    }
+    if ((_resetAttempts[email] ?? 0) >= 5) {
+      return _err(400, 'CODE_EXPIRED', '코드가 만료됐어요 (5회 초과)');
+    }
+    if (code != resetCode) {
+      _resetAttempts[email] = (_resetAttempts[email] ?? 0) + 1;
+      return _err(400, 'INVALID_CODE', '코드가 올바르지 않아요');
+    }
+    _resetAttempts.remove(email);
+    // 성공 시 실서버는 전 세션(refresh)을 폐기한다 — Mock도 동일하게 흉내.
+    _refreshTokens.clear();
+    return _ok({'reset': true});
   }
 
   BackendResponse _refresh(BackendRequest r) {

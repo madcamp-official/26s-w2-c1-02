@@ -35,6 +35,27 @@ class AuthRepository {
   Future<void> requestEmailVerification(String email) =>
       _api.post('/auth/email/verify-request', body: {'email': email});
 
+  /// 아이디 찾기 — 가입된 이메일이면 아이디를 메일로 보낸다. 유저가 없어도 204
+  /// (계정 존재 노출 방지). 아이디는 응답 본문에 오지 않는다 (§2).
+  Future<void> findUsername(String email) =>
+      _api.post('/auth/username/find', body: {'email': email});
+
+  /// 비밀번호 재설정 코드 발송 — 유저가 없어도 204. 60초 쿨다운은 429 (§2).
+  Future<void> requestPasswordReset(String email) =>
+      _api.post('/auth/password/reset-request', body: {'email': email});
+
+  /// 비밀번호 재설정 — 코드 + 새 비밀번호. 성공 시 기존 세션은 서버에서 폐기된다 (§2).
+  Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) =>
+      _api.post('/auth/password/reset', body: {
+        'email': email,
+        'code': code,
+        'new_password': newPassword,
+      });
+
   Future<AppUser> me() async {
     final json = await _api.get('/auth/me') as Map<String, dynamic>;
     return AppUser.fromJson(json['user'] as Map<String, dynamic>);

@@ -39,6 +39,21 @@ class AuthController extends ChangeNotifier {
   Future<void> requestEmailVerification(String email) =>
       _repo.requestEmailVerification(email);
 
+  /// 아이디 찾기 — 이메일로 아이디 안내 (§2). 결과는 항상 성공 취급(열거 방지).
+  Future<void> findUsername(String email) => _repo.findUsername(email);
+
+  /// 비밀번호 재설정 코드 발송 (§2 — 60초 쿨다운은 화면 몫).
+  Future<void> requestPasswordReset(String email) =>
+      _repo.requestPasswordReset(email);
+
+  /// 비밀번호 재설정 — 코드 + 새 비밀번호 (§2).
+  Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) =>
+      _repo.resetPassword(email: email, code: code, newPassword: newPassword);
+
   Future<void> logout() async {
     await _repo.logout();
     _user = null;
