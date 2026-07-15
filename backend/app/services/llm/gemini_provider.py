@@ -135,9 +135,27 @@ class GeminiLLMProvider(LLMProvider):
         # 호출 상한을 명시한다(HttpOptions.timeout은 밀리초). 미설정 시 SDK 기본이
         # 사실상 무제한이라 응답 지연 시 질문 생성 잡이 오래 매달리고 세션이 계속
         # generating_questions에 갇힌다. 상한을 넘으면 SDK가 에러를 던져 failed로 흡수된다.
+        #
+        # retry_options를 명시해 Gemini의 일시적 서버 오류를 자동 재시도한다. 안 주면
+        # google-genai는 stop_after_attempt(1)("재시도 없음")이 기본이라, 503 UNAVAILABLE
+        # ('모델 고수요, 잠시 후 재시도')·504 DEADLINE_EXCEEDED·429·500·502 같은 순간
+        # 스파이크가 한 번만 떠도 질문 생성이 곧장 failed로 떨어졌다(2026-07-15 장애: 한
+        # 사용자가 3분간 '다시 생성'을 7번 눌렀지만 매번 새 503/504에 걸림). SDK 기본
+        # 재시도 대상 코드(408/429/500/502/503/504)에 지수 백오프+지터를 걸어 흡수한다.
+        # timeout은 재시도 1회당 적용되므로, 최악의 경우 대기 시간은 시도 횟수에 비례한다
+        # (백그라운드 잡이라 FE는 폴링으로 진행 중 화면을 유지 — 사용자 조작 불필요).
+        http_options = types.HttpOptions(timeout=settings.gemini_timeout_seconds * 1000)
+        if settings.gemini_max_attempts > 1:
+            http_options.retry_options = types.HttpRetryOptions(
+                attempts=settings.gemini_max_attempts,
+                initial_delay=1.0,
+                max_delay=30.0,
+                exp_base=2,
+                jitter=1,
+            )
         self._client = genai.Client(
             vertexai=settings.gemini_use_vertex, api_key=key,
-            http_options=types.HttpOptions(timeout=settings.gemini_timeout_seconds * 1000),
+            http_options=http_options,
         )
         self._model = settings.gemini_model
 

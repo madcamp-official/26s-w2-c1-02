@@ -51,7 +51,14 @@ class Settings(BaseSettings):
     # Gemini 호출 1건 상한(초). 기본 미설정 시 SDK 기본이 사실상 무제한이라, 응답이
     # 늦어지면 질문 생성 잡이 오래 매달린다. 이 시간이 지나면 SDK가 에러를 던지고
     # run_generate가 세션을 failed로 흡수 → 폴링에서 '생성 실패'로 빠르게 노출된다.
+    # (이 상한은 재시도 1회당 적용된다 — gemini_max_attempts 참고.)
     gemini_timeout_seconds: int = 60
+    # Gemini 호출 총 시도 횟수(최초 호출 포함). google-genai는 retry_options를 안 주면
+    # stop_after_attempt(1)로 "재시도 없음"이 기본이라, Gemini의 일시적 서버 오류
+    # (503 UNAVAILABLE '고수요'/504 DEADLINE_EXCEEDED/429/500/502)가 한 번만 떠도 질문
+    # 생성이 곧장 failed로 떨어져 사용자가 '다시 생성'을 반복해야 했다(2026-07-15 장애).
+    # 1보다 크면 지수 백오프+지터로 자동 재시도해 이런 일시 스파이크를 흡수한다.
+    gemini_max_attempts: int = 4
 
     @property
     def cors_origin_list(self) -> list[str]:
