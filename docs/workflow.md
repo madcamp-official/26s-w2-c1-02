@@ -1,7 +1,8 @@
 # Rehearsal.io — 역할 분담 & 워크플로우
 
-> 기준 문서: [api-spec.md](api-spec.md) v0.3 · [db-schema.md](db-schema.md) v1.0 · [infra/gpu-server/README.md](../infra/gpu-server/README.md) · [design/wireframes/README.md](../design/wireframes/README.md)
-> 작성일: 2026-07-11
+> 기준 문서: [api-spec.md](api-spec.md) v0.3 · [db-schema.md](db-schema.md) v1.1 · [infra/gpu-server/README.md](../infra/gpu-server/README.md) · [design/wireframes/README.md](../design/wireframes/README.md)
+> 작성일: 2026-07-11 · 최종 갱신: 2026-07-15 · 상태: **프로젝트 완료** — 아래 체크리스트는 최종 결과 기준으로 갱신됨.
+> 스코프 컷 최종 결과: 핵심 루프(자료→STT→질문→TTS→답변→꼬리질문→리포트) 전부 구현. 이메일 인증(SMTP)·아이디/비밀번호 찾기 **구현**, 소셜 로그인·SSE·레이트리밋 **미구현으로 종료**.
 
 ---
 
@@ -42,7 +43,7 @@
 
 ### 팀원2 (Backend Core)
 
-- [x] PostgreSQL 16 기동 + db-schema DDL 전체 적용 (ENUM 12종, 테이블 16개, 트리거)
+- [x] PostgreSQL 16 기동 + db-schema DDL 전체 적용 (ENUM 12종, 테이블 16개 — 이후 002·003 마이그레이션으로 최종 18개, 트리거)
 - [x] SQLAlchemy(또는 선택 ORM) 모델 + prefix ID 생성기 (`usr_` + base62)
 - [x] `/auth/signup·login·refresh·logout·me` — JWT + refresh 해시 저장, Web=httpOnly 쿠키 / Native=본문 분기
 - [x] `/teams`, `/teams/{id}/members·leave`, 초대(이메일은 발송 없이 토큰만이라도), 팀장 승계 트랜잭션 (db-schema §7.2) — `teams.py`(members·leave·승계)·`invites.py`(이메일/링크·accept/decline) 완료
@@ -75,7 +76,7 @@
 - [x] STT 클라이언트: **5분 청크 분할 + 타임스탬프 오프셋 합산 병합** (ForcedAligner 제약 — 이 스텝 최난도) → [stt-client-workflow.md](ai-pipeline/stt-client-workflow.md)
   - `backend/app/services/stt.py` `transcribe_recording(경로) → [{"start","end","text"}]` (초 float, 문장급)
   - E2E 실측: 2.7분 발표 전사 5.4s(RTF 0.033), 경계 중복 0, CER 0.96%. 팀원2 합류 검증(7단계)만 남음
-- [~] `transcripts.segments` JSONB 형식(초 단위 float)으로 저장되는지 팀원2와 함께 검증 — STT 큐 통합으로 저장 경로는 라이브(업로드→`stt_queue`→`transcripts.segments`, 커밋 707797e). 남은 것: `ts:"MM:SS"` 변환 라우터 연결(현재 `SessionDetail`은 `transcript.status`만 노출, `seconds_to_ts`는 아직 라우터 미연결) → stt-client-workflow §7
+- [x] `transcripts.segments` JSONB 형식(초 단위 float)으로 저장되는지 팀원2와 함께 검증 — STT 큐 통합으로 저장 경로 라이브(업로드→`stt_queue`→`transcripts.segments`). `ts:"MM:SS"` 변환도 라우터 연결 완료 — `GET /transcript`(recordings.py)·evidence `transcript_refs`(qna.py)가 `seconds_to_ts`로 변환해 응답
 
 ### 팀원1 (Frontend)
 
@@ -92,7 +93,7 @@
 - [x] 질문 생성 프롬프트: slides+transcript+persona 입력 → `text, persona, strategy, evidence{slides, transcript_refs}` JSON 강제. "슬라이드에 있으나 미언급 / 언급했으나 근거 약함" 타게팅 → 세부 계획·격차: [qna-prompt-workflow.md](ai-pipeline/qna-prompt-workflow.md)
 - [x] 꼬리질문 프롬프트: 답변 원문(raw STT — 간투사 포함이니 노이즈 견디게) 입력, 깊이 1 제한, "생성 안 함" 판정 포함 → 동상
   - ✅ 완료(2026-07-13): overlay 단계 A(스키마·시그니처 §4.4 정렬)·B(질문 생성 프롬프트)·C(꼬리질문 프롬프트 + gemini prompt-caching으로 토큰 절약) 구현·커밋. 각 단계 오프라인 검증(persona 라운드로빈·evidence 사후검증·깊이 가드·needed 분기) 통과.
-  - 🔜 남음: overlay 단계 **D(회귀 스냅샷 테스트)** + 팀원2 라우터 합류 검증(`POST /qna/generate`→저장→`GET /qna` 필드 일치)
+  - ✅ 잔여분도 완료: D(회귀 스냅샷 — mock LLM 결정론 전제, `test_qna_generate`·`test_qna_schemas` 등) + 팀원2 라우터 합류 검증(`POST /qna/generate`→저장→`GET /qna` 라이브)
 - [x] TTS 연동: 질문 텍스트 → 페르소나 음색 wav (서버는 wav/pcm만 지원 — mp3 아님) — `services/tts.py` 완료(2026-07-13)
   - `synthesize_question(text, persona) → wav bytes`: persona→voice 1:1, **미등록 voice(400) → `default` 자동 폴백**(+프로세스 캐시)
     · 일시 오류(5xx) 백오프 재시도 · 실패 시 `TtsError`(→ `tts_status='failed'`). `list_voices()`로 등록 점검.
@@ -105,20 +106,17 @@
 
 ### 팀원2 (Backend Core)
 
-- [ ] `POST /qna/generate` 202 → 팀원3 서비스 호출 → `questions` 저장 + 질문별 TTS 잡
-- [ ] `POST /answer` **202만 반환** → 답변 STT → `answer.status=ready` → 꼬리질문 판정 → `follow_up_status` + 자식 질문 삽입 + `current_question_id` 이동
-  - **꼬리질문 persona = 부모 질문 persona (라우터가 승계)**: `follow_up()`이 반환하는 `QuestionDraft.persona`는
-    placeholder(`egen` 기본값)다. 팀원3의 서비스는 원 질문의 persona를 인자로 받지 않으므로(시그니처 `follow_up(*, question, answer, depth)`),
-    자식 질문 행을 삽입할 때 **부모 질문의 `persona`로 덮어써야** 한다(전략·evidence는 자식 자체 값 사용, evidence는 필요 시 부모 근거 승계 가능).
-    안 덮으면 전 꼬리질문이 egen 말투/음성으로 나가는 버그. → 계약: [qna-prompt-workflow.md](ai-pipeline/qna-prompt-workflow.md) C단계
-- [ ] `pass`(꼬리 생략), `qna/end`(종료 우선순위 A12), 종료 시 리포트 잡 자동 큐
-- [ ] `GET /qna`가 폴링 단일 소스로 spec 예시와 필드 단위 일치하는지 확인
+- [x] `POST /qna/generate` 202 → 팀원3 서비스 호출 → `questions` 저장 + 질문별 TTS 잡 — `qna_jobs.run_generate()` 완료
+- [x] `POST /answer` **202만 반환** → 답변 STT → `answer.status=ready` → 꼬리질문 판정 → `follow_up_status` + 자식 질문 삽입 + `current_question_id` 이동 — `qna_jobs.run_answer_stt()` 완료 (STT 직렬 큐 공유)
+  - **꼬리질문 persona = 부모 질문 persona 승계** — 자식 질문 삽입 시 `persona=question.persona`로 덮어씀(qna_jobs.py) → "전 꼬리질문이 egen으로 나가는 버그" 방지 확인
+- [x] `pass`(꼬리 생략), `qna/end`(종료 우선순위 A12), 종료 시 리포트 잡 자동 큐 — `end_session()` 공용화 (자동 종료·수동 종료 공유)
+- [x] `GET /qna`가 폴링 단일 소스로 spec 예시와 필드 단위 일치 — `test_qna_get` 등으로 검증
 
 ### 팀원1 (Frontend)
 
-- [ ] 질의응답 화면(06-qna): TTS 재생(다시 듣기 = 같은 URL), 재생 완료 → **자동 답변 녹음**, 제한시간/패스
-- [ ] 답변 업로드 후 `GET /qna` 폴링 → 꼬리질문 등장/다음 질문 이동/종료 처리
-- [ ] 근거 배지(evidence 슬라이드 번호·ts) 표시, 마이크 권한 요청/거부 화면(10-common)
+- [x] 질의응답 화면(06-qna): TTS 재생(다시 듣기 = 같은 URL), 재생 완료 → **자동 답변 녹음**, 제한시간/패스 — `session/qna_page.dart`
+- [x] 답변 업로드 후 `GET /qna` 폴링 → 꼬리질문 등장/다음 질문 이동/종료 처리
+- [x] 근거 배지(evidence 슬라이드 번호·ts) 표시, 마이크 권한 요청/거부 화면(10-common) — `common/mic_permission_view.dart`
 
 ---
 
@@ -134,39 +132,39 @@
 
 ### 팀원2 (Backend Core)
 
-- [ ] `GET /report`, `POST /report/generate`, `GET /users/me/report/growth` (db-schema §8.1 쿼리 그대로)
-- [ ] 세션 삭제 cascade + 스토리지 파일 삭제 (커밋 후 삭제, db-schema §7.3)
-- [ ] KCLOUD VM 배포 + 터널(허용 포트 주의 — 루트 README 표 참고), GPU 서버와 사설망 연결 확인
+- [x] `GET /report`, `POST /report/generate`, `GET /users/me/report/growth` (db-schema §8.1 쿼리 그대로) — `reports.py` + `report_jobs.py` 완료
+- [x] 세션 삭제 cascade + 스토리지 파일 삭제 (커밋 후 삭제, db-schema §7.3) — `storage_cleanup.py`
+- [x] KCLOUD VM 배포 + 터널 — https://horsetail.madcamp-kaist.org 라이브 (systemd `rehearsal-backend` + nginx + Cloudflare Tunnel, 배포 스크립트 [update.sh](../update.sh))
 
 ### 팀원1 (Frontend)
 
-- [ ] 이전 발표(07-history: 스크립트/Q&A 로그 탭), 리포트(08-report: 강약점·습관·성장 그래프), 마이페이지(09)
-- [ ] **Mock-off 전환**: `USE_MOCK=false`로 실서버 대상 전체 플로우 통과
-- [ ] 크로스플랫폼 검증: Web + 모바일(에뮬레이터/실기기) 최소 2개 타깃에서 핵심 루프 동작
+- [x] 이전 발표(07-history: 스크립트/Q&A 로그 탭), 리포트(08-report: 강약점·습관·성장 그래프), 마이페이지(09) — `session_detail_page`·`growth_report_page`·`my_page` 등
+- [x] **Mock-off 전환**: `USE_MOCK=false`로 실서버 대상 전체 플로우 통과 — 프로덕션 웹·APK 빌드 모두 `USE_MOCK=false`로 배포
+- [x] 크로스플랫폼 검증: Web(프로덕션 배포) + Android(서명 APK 사설 배포, [docs/android-apk-release.md](android-apk-release.md))
 
 ### 전원 (통합 데이)
 
-- [ ] 실제 PDF + 실제 발표 녹음으로 E2E 1회: 업로드→질문→음성 티키타카→리포트까지 논스톱
-- [ ] 실패 지점 목록화 → Day 7 백로그
+- [x] 실제 PDF + 실제 발표 녹음으로 E2E 1회: 업로드→질문→음성 티키타카→리포트까지 논스톱
+- [x] 실패 지점 목록화 → Day 7 백로그 — 실구동에서 발견된 문제들(업로드 스트리밍, 백그라운드 잡 복구, 세션 복원, 초대 반영 등) 수정 커밋으로 처리
 
 ---
 
 ## Step 5 — 안정화 + 시연 준비 (Day 7)
 
-- [ ] (전원) 에러/재시도 UX: STT 실패 재시도, TTS failed, 이어하기(세션 상태 재조회)
-- [ ] (팀원1) 로딩·폴링 중 UX 다듬기 (질문 생성 대기, TTS 대기가 체감 지연 최대 지점)
-- [ ] (팀원2) 시드 데이터 + 데모 계정 준비, 레이트리밋 최소 방어
-- [ ] (팀원3) 시연용 발표자료·녹음 리허설 — STT/TTS 실측 지연 기준으로 시연 대본 타이밍 설계
-- [ ] (전원) **루트 README 빈칸 채우기**: 핵심 구현 요소, 아키텍처 다이어그램, 구현 명세서, 기술 구성, 실행 방법 — 과제 제출물 자체이므로 필수. backend/frontend README도 구버전(Gemini·Team/Speech 기준)이라 현행화 필요
+- [x] (전원) 에러/재시도 UX: STT 실패 재시도(`transcript/retry`), 자료 재시도(`material/retry`), 리포트 "다시 생성", 녹음 업로드 실패 시 행동, 이어하기(draft 세션 `/edit` 프리필)
+- [x] (팀원1) 로딩·폴링 중 UX 다듬기 — `processing_page`(전사·질문 생성 대기)·`polling_builder` 공용화
+- [x] (팀원2) 시드 데이터 + 데모 계정 준비 — `scripts/seed_demo.py` (`demo / demo-pass-1234`, 성장 리포트 시연 데이터 포함). 레이트리밋은 **미도입으로 종료**
+- [ ] (팀원3) 시연용 발표자료·녹음 리허설 — 시연 당일 준비 항목
+- [x] (전원) **루트 README 빈칸 채우기** + backend/frontend/db-schema 문서 현행화 — 2026-07-15 완료 (회고 KPT·팀원 소감·시연 영상 자리만 남음)
 - [ ] 시연 영상 녹화
 
 ---
 
-## 리스크 & 미리 정할 것
+## 리스크 & 미리 정할 것 — 최종 결과
 
-| 항목 | 내용 | 액션 |
+| 항목 | 내용 | 결과 |
 |---|---|---|
-| STT 직렬 처리 | 발표 전사(수 분) 중 답변 전사가 대기 | 시연은 "발표 전사 완료 후 Q&A 시작" 순서라 실제로는 OK. 데모 중 재업로드가 겹치지 않게 주의 |
-| api-spec §0.2 가정값 (A1~A13) | 문서상 "확정 필요" 상태 | Step 1 시작 전 30분 회의로 전부 확정하고 spec의 ⚠️ 표시 제거. WPM 필러 제외 여부(db-schema §9)도 이때 결정 |
-| 실존 인물 목소리 클로닝 (Qwen3-TTS) | 2-모델 TTS 계획은 현재 infra 문서에 없음 (VoxCPM2 단일) | v0.3 구성(상주 모델 2개)에 맞춰 **스트레치 골**로 유지 |
-| 이메일 발송 / 소셜 OAuth | 외부 의존이 커서 마지막 날 발목 잡기 쉬움 | 초반에 "선택" 확정하고 mock 유지 |
+| STT 직렬 처리 | 발표 전사(수 분) 중 답변 전사가 대기 | 단일 워커 직렬 큐(`stt_queue`)로 구현 — 발표·답변 전사가 같은 큐를 공유해 GPU에서 겹치지 않음. 시연 순서("전사 완료 후 Q&A")와도 정합 |
+| api-spec §0.2 가정값 (A1~A13) | 문서상 "확정 필요" 상태 | Step 1 회의에서 확정 완료. WPM 필러 제외(2026-07-13 결정)까지 구현 반영 |
+| 실존 인물 목소리 클로닝 (Qwen3-TTS) | 2-모델 TTS 계획 | **제외 확정** — TTS는 VoxCPM2 셀프 캐스팅 페르소나 5종으로 일원화 ([persona_voices.md](../infra/gpu-server/persona_voices.md)) |
+| 이메일 발송 / 소셜 OAuth | 외부 의존이 커서 마지막 날 발목 잡기 쉬움 | 이메일 인증은 **SMTP 실발송까지 구현**(mock 폴백 유지), 아이디 찾기·비밀번호 재설정도 구현. 소셜 로그인은 **미구현으로 종료**(Mock 엔드포인트만) |
