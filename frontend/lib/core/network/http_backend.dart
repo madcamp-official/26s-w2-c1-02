@@ -3,6 +3,11 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+// 웹에서는 refresh 쿠키를 실어보내는 BrowserClient(withCredentials=true)를,
+// 그 외에는 기본 클라이언트를 쓴다 (http 패키지와 동일한 조건부 임포트 규칙).
+import 'http_client_io.dart'
+    if (dart.library.js_interop) 'http_client_web.dart';
+
 /// ApiClient가 실제로 요청을 보내는 대상의 추상화.
 ///
 /// - [RealHttpBackend]: 실서버 (package:http)
@@ -103,7 +108,7 @@ class RealHttpBackend implements HttpBackend {
     http.Client? client,
     this.requestTimeout = const Duration(seconds: 30),
     this.uploadTimeout = const Duration(minutes: 10),
-  }) : _client = client ?? http.Client();
+  }) : _client = client ?? createHttpClient();
 
   final String baseUrl;
   final http.Client _client;
