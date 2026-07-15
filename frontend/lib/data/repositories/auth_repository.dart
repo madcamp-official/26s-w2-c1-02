@@ -61,6 +61,11 @@ class AuthRepository {
     return AppUser.fromJson(json['user'] as Map<String, dynamic>);
   }
 
+  /// 앱 시작 시 저장된 세션으로 로그인 상태를 복원한다 (새로고침 후 유지).
+  /// Web은 httpOnly 쿠키로 새 access 토큰을 발급받는다. 성공 여부를 반환하며,
+  /// 성공 시 호출자는 [me]로 사용자 정보를 다시 받아온다.
+  Future<bool> restoreSession() => _api.tryRestoreSession();
+
   Future<void> logout() => _api.logout();
 
   Future<void> changePassword({
