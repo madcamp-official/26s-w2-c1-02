@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Cookie, Depends, Header, Response
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -43,6 +43,46 @@ from app.services.email_verification import (
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+def _reclaim_stale_unverified(db: Session, *, username: str, email: str) -> None:
+    """미인증인 채 인증 창까지 만료된 계정이 username/email을 점유 중이면 삭제한다.
+
+    미인증 유저는 로그인이 막혀 있어(email_verified_at 필수) 팀·세션 등 딸린 데이터를
+    만들 수 없다 → 하드 삭제해도 잃을 게 없고, 붙잡고 있던 아이디/이메일이 부분 유니크
+    인덱스(WHERE ... IS NOT NULL)에서 풀려 재가입이 가능해진다. email_verifications는
+    FK CASCADE로 함께 사라진다.
+
+    '인증 창이 아직 열림'(소비 안 된 미만료 코드가 하나라도 존재)은 진행 중인 가입이므로
+    회수하지 않는다 — 그 경우 아래 중복 검사가 그대로 409를 낸다. username·email이 서로
+    다른 두 stale 계정에 걸쳐 있어도 둘 다 정리한다.
+    """
+    now = datetime.now(timezone.utc)
+    has_live_code = (
+        select(models.EmailVerification.id)
+        .where(
+            models.EmailVerification.user_id == models.User.id,
+            models.EmailVerification.consumed_at.is_(None),
+            models.EmailVerification.expires_at > now,
+        )
+        .exists()
+    )
+    stale = db.scalars(
+        select(models.User).where(
+            or_(
+                func.lower(models.User.username) == username.lower(),
+                func.lower(models.User.email) == email.lower(),
+            ),
+            models.User.email_verified_at.is_(None),
+            models.User.deleted_at.is_(None),
+            ~has_live_code,
+        )
+    ).all()
+    if not stale:
+        return
+    for user in stale:
+        db.delete(user)  # DB의 ON DELETE CASCADE가 email_verifications도 정리
+    db.commit()
+
+
 @router.post("/signup", response_model=SignupResponse, status_code=201)
 def signup(
     body: SignupRequest,
@@ -54,6 +94,9 @@ def signup(
     - username/email 중복은 대소문자 무시 (DB 부분 유니크 인덱스와 동일 기준)
     - 발송은 BackgroundTasks(응답 무영향) — 실패해도 가입은 성공, 재발송으로 복구
     """
+    # 0) 인증 창까지 만료된 미인증 계정이 아이디/이메일을 쥐고 있으면 회수 — 재가입 허용
+    _reclaim_stale_unverified(db, username=body.username, email=body.email)
+
     # 1) 중복 선검사 — 명확한 에러 코드를 주기 위해 (레이스는 아래 IntegrityError가 최종 방어)
     if db.scalar(select(models.User.id).where(func.lower(models.User.username) == body.username.lower())):
         raise ApiError(409, "USERNAME_TAKEN", "이미 사용 중인 아이디예요.")

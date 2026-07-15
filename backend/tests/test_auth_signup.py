@@ -199,6 +199,64 @@ class TestSignupHardening:
         assert r1.status_code == 201 and r2.status_code == 201
         assert r1.json()["user"]["id"] != r2.json()["user"]["id"]
 
+    def _expire_codes(self, uid: str) -> None:
+        """유저의 모든 미소비 인증코드를 과거로 만료시킨다 (인증 창 닫힘 시뮬레이션)."""
+        from datetime import datetime, timedelta, timezone
+
+        from sqlalchemy import update
+
+        with SessionLocal() as db:
+            db.execute(
+                update(EmailVerification)
+                .where(EmailVerification.user_id == uid)
+                .values(expires_at=datetime.now(timezone.utc) - timedelta(minutes=1))
+            )
+            db.commit()
+
+    def test_stale_unverified_username_can_be_reclaimed(self):
+        """인증 창까지 만료된 미인증 계정의 아이디로 재가입이 가능해야 한다."""
+        res1 = client.post(SIGNUP_URL, json=_valid_body())
+        uid1 = res1.json()["user"]["id"]
+        self._expire_codes(uid1)
+
+        res2 = client.post(SIGNUP_URL, json=_valid_body(email="sgtest2@test.io"))
+        assert res2.status_code == 201
+        assert res2.json()["user"]["id"] != uid1
+        with SessionLocal() as db:  # 옛 stale 행은 회수(삭제)됐어야 한다
+            assert db.get(User, uid1) is None
+
+    def test_stale_unverified_email_can_be_reclaimed(self):
+        res1 = client.post(SIGNUP_URL, json=_valid_body())
+        uid1 = res1.json()["user"]["id"]
+        self._expire_codes(uid1)
+
+        res2 = client.post(SIGNUP_URL, json=_valid_body(username="sgtest_new"))
+        assert res2.status_code == 201
+        with SessionLocal() as db:
+            assert db.get(User, uid1) is None
+
+    def test_unverified_but_live_code_is_not_reclaimed(self):
+        """코드가 아직 살아있으면(진행 중 가입) 회수하지 않고 409를 준다."""
+        client.post(SIGNUP_URL, json=_valid_body())  # 방금 가입 → 코드 유효
+        res = client.post(SIGNUP_URL, json=_valid_body(email="sgtest2@test.io"))
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "USERNAME_TAKEN"
+
+    def test_verified_account_is_never_reclaimed(self):
+        """인증 완료 계정은 코드가 만료돼도 절대 회수되지 않는다."""
+        from tests.conftest import mark_email_verified
+
+        res1 = client.post(SIGNUP_URL, json=_valid_body())
+        uid1 = res1.json()["user"]["id"]
+        mark_email_verified("sgtest_user")
+        self._expire_codes(uid1)
+
+        res2 = client.post(SIGNUP_URL, json=_valid_body(email="sgtest2@test.io"))
+        assert res2.status_code == 409
+        assert res2.json()["error"]["code"] == "USERNAME_TAKEN"
+        with SessionLocal() as db:
+            assert db.get(User, uid1) is not None
+
     def test_verification_code_expiry_is_about_10_minutes(self):
         """인증코드 유효시간이 의도(10분)대로 설정되는지."""
         from datetime import datetime, timezone
