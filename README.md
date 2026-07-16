@@ -257,7 +257,7 @@ bash setup_tts.sh && bash setup_stt.sh   # 이후 start_tts.sh / start_stt.sh
 
 **정서영:**
 
-> 
+> VM으로 웹사이트를 배포했는데 VM을 죽어버려서 배포를 내 VM으로 끝까지 못한 것이 아쉽다. 다음에는 VM을 죽이지 않고 싶다.
 
 ---
 
