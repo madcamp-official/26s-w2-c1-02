@@ -249,7 +249,7 @@ bash setup_tts.sh && bash setup_stt.sh   # 이후 start_tts.sh / start_stt.sh
 
 **박준서:**
 
-> 
+> 프론트엔드와 백엔드를 연결하는 과정에서 많은 Exception이 터졌는데, 초반 API 명세를 설계할 때 몇몇 상황을 빠뜨려서 발생한 일이었다. API 명세를 치밀하게 잘 작성해야 한다는 걸 다시 한 번 실감했다.
 
 **이서진:**
 
@@ -257,7 +257,7 @@ bash setup_tts.sh && bash setup_stt.sh   # 이후 start_tts.sh / start_stt.sh
 
 **정서영:**
 
->
+> 
 
 ---
 
