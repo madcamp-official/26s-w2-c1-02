@@ -253,7 +253,7 @@ bash setup_tts.sh && bash setup_stt.sh   # 이후 start_tts.sh / start_stt.sh
 
 **이서진:**
 
-> 
+> 프로젝트 초반부터 기능 명세서와 api 명세서를 작성하면 팀원 간의 역할 분담과 중간중간 merge의 난이도가 훨씬 쉬워진다는 것을 알게 되었다. 또한, 무료 LLM API 사용에 불편함(하루 호출량 제한)을 느껴 지난 주차에 이어 다시 한 번 유료 LLM API 사용을 해보고 싶어졌다.
 
 **정서영:**
 
